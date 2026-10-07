@@ -280,7 +280,7 @@ void test('trident creates two independently collidable heads under one owner', 
   const start = Date.now() + 2_100;
   room.food.splice(0);
   room.powerUps.splice(0);
-  source.head = { x: 5, y: 5 };
+  source.head = { x: 500, y: 300 };
   source.angle = 0;
   room.step(start, 0);
   room.spawnPowerUp('trident', { ...source.head });
@@ -301,7 +301,7 @@ void test('trident creates two independently collidable heads under one owner', 
         snake.head.y >= 0 &&
         snake.head.y <= WORLD_HEIGHT,
     ),
-    'an edge spawn keeps the whole formation on the same side of the seam',
+    'the complete formation spawns inside the arena',
   );
   const primary = heads.find((snake) => snake.id === 'p1');
   assert.ok(primary);
@@ -324,6 +324,17 @@ void test('trident creates two independently collidable heads under one owner', 
     .snapshot()
     .snakes.filter((snake) => snake.ownerId === 'p1');
   assert.ok(turned.every((snake) => snake.angle !== angles.get(snake.id)));
+
+  room.setInput('p1', NO_INPUT);
+  for (let tick = 0; tick < 60; tick += 1)
+    room.step(start + 40 + tick * (1000 / 60), 1 / 60);
+  assert.equal(
+    room
+      .snapshot()
+      .snakes.filter((snake) => snake.ownerId === 'p1' && snake.alive).length,
+    3,
+    'all three heads clear the opening fork without hitting sibling trails',
+  );
 });
 
 void test('a dead Trident head stays dead while either sibling survives', () => {

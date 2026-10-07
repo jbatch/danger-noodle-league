@@ -43,6 +43,7 @@ const BLAST_VISUAL_DURATION = 0.4;
 const RAIL_DURATION = 16 / UPDATE_RATE;
 const TRIDENT_ANGLE = (15 * Math.PI) / 180;
 const TRIDENT_OFFSET = 24;
+const TRIDENT_COLLISION_GRACE_MS = 2_000;
 const RESPAWN_DELAY_MS = 1_250;
 const SPAWN_GRACE_MS = 2_000;
 const HEAD_RADIUS = 11;
@@ -94,6 +95,7 @@ type Snake = SnakeSnapshot & {
   invulnerableUntil: number;
   leftPressedOrder: number;
   rightPressedOrder: number;
+  siblingCollisionGraceUntil: number;
 };
 
 type WorldPowerUp = PowerUpSnapshot & { lifeRemaining: number };
@@ -562,6 +564,7 @@ export class GameRoom {
 
     source.head.x += shiftX;
     source.head.y += shiftY;
+    source.siblingCollisionGraceUntil = now + TRIDENT_COLLISION_GRACE_MS;
     for (let index = 0; index < branchAngles.length; index += 1) {
       const angle = branchAngles[index];
       const position = branchPositions[index];
@@ -584,6 +587,7 @@ export class GameRoom {
       head.jumpWasDown = source.jumpWasDown;
       head.powerWasDown = source.powerWasDown;
       head.pingMs = source.pingMs;
+      head.siblingCollisionGraceUntil = now + TRIDENT_COLLISION_GRACE_MS;
       this.snakes.set(id, head);
     }
   }
@@ -767,6 +771,12 @@ export class GameRoom {
         continue;
       for (const other of this.snakes.values()) {
         if (!other.alive) continue;
+        if (
+          other.id !== snake.id &&
+          other.ownerId === snake.ownerId &&
+          now < snake.siblingCollisionGraceUntil
+        )
+          continue;
         const start = other.id === snake.id ? 15 : 0;
         for (let index = start; index < other.body.length; index += 1) {
           if (
@@ -908,6 +918,7 @@ export class GameRoom {
       invulnerableUntil: now + SPAWN_GRACE_MS,
       leftPressedOrder: Number.POSITIVE_INFINITY,
       rightPressedOrder: Number.POSITIVE_INFINITY,
+      siblingCollisionGraceUntil: 0,
     };
   }
 }
