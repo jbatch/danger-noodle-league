@@ -12,7 +12,11 @@ The reverse-engineered replication target—including original movement, jumping
 - Up activates the equipped power-up (`↑` or `W`)
 - Wraparound arena with no outside walls
 - Glowing dots grow the snake
-- One-slot inventory with Speed Boost and Fireball pickups
+- One-slot inventory with Speed Boost, Fireball, Jumper, Grenade, One Eighty,
+  Rail Gun, and Trident pickups
+- Six-second Fireball lifetime so unattended shots cannot live in a room forever
+- Original-style grenade arcs, tall jumps, instant rail shots, tail reversal,
+  and multi-head Trident control
 - Original-style 60 Hz movement, turning, jump timing, and trail gaps
 - Self- and opponent-tail collisions
 - Room codes and copyable invite URLs

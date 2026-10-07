@@ -143,6 +143,162 @@ void test('speed boost and fireball are authoritative inventory power-ups', () =
   assert.equal(fireRoom.snapshot().fireballs.length, 0, 'the hit consumes it');
 });
 
+void test('fireballs expire after six seconds instead of persisting forever', () => {
+  const room = new GameRoom('FIRE-LIFE', () => 0.5);
+  const shooter = room.addPlayer('p1', 'Shooter');
+  const start = Date.now() + 2_100;
+  room.food.splice(0);
+  room.powerUps.splice(0);
+  shooter.head.x = 100;
+  shooter.head.y = 100;
+  shooter.angle = 0;
+  room.step(start, 0);
+  room.spawnPowerUp('fireball', { ...shooter.head });
+  room.step(start + 1, 0);
+  room.setInput('p1', { ...NO_INPUT, power: true });
+  room.step(start + 2, 0);
+  room.removePlayer('p1');
+
+  for (let tick = 0; tick < 121; tick += 1)
+    room.step(start + 20 + tick * 50, 0.05);
+  assert.equal(room.snapshot().fireballs.length, 0);
+  assert.equal(GAMEPLAY.fireballLifespan, 6);
+});
+
+void test('jumper makes the original tall 91-tick jump', () => {
+  const room = new GameRoom('JUMPER', () => 0.5);
+  const snake = room.addPlayer('p1', 'Jumper');
+  const start = Date.now() + 2_100;
+  room.food.splice(0);
+  room.powerUps.splice(0);
+  snake.head.x = 100;
+  snake.head.y = 200;
+  snake.angle = 0;
+  room.step(start, 0);
+  room.spawnPowerUp('jumper', { ...snake.head });
+  room.step(start + 1, 0);
+  room.setInput('p1', { ...NO_INPUT, power: true });
+  room.step(start + 2, 0);
+
+  for (let tick = 0; tick < 45; tick += 1)
+    room.step(start + 20 + tick * (1000 / 60), 1 / 60);
+  assert.ok(room.snapshot().snakes[0].jumpScale > 3.05);
+  for (let tick = 45; tick < 91; tick += 1)
+    room.step(start + 20 + tick * (1000 / 60), 1 / 60);
+  const landed = room.snapshot().snakes[0];
+  assert.equal(landed.jump, 0);
+  assert.equal(landed.jumpScale, 1);
+  assert.ok(Math.abs(landed.head.x - 282) < 1e-6);
+});
+
+void test('grenades arc for 63 ticks then destroy grounded targets and trails', () => {
+  const room = new GameRoom('GRENADE', () => 0.5);
+  const shooter = room.addPlayer('p1', 'Shooter');
+  const target = room.addPlayer('p2', 'Target');
+  const start = Date.now() + 2_100;
+  room.food.splice(0);
+  room.powerUps.splice(0);
+  shooter.head.x = 100;
+  shooter.head.y = 200;
+  shooter.angle = 0;
+  target.head.x = 900;
+  target.head.y = 500;
+  room.step(start, 0);
+  room.spawnPowerUp('grenade', { ...shooter.head });
+  room.step(start + 1, 0);
+  room.setInput('p1', { ...NO_INPUT, power: true });
+  room.step(start + 2, 0);
+  assert.equal(room.snapshot().grenades.length, 1);
+
+  for (let tick = 0; tick < 62; tick += 1)
+    room.step(start + 20 + tick * (1000 / 60), 1 / 60);
+  const grenade = room.snapshot().grenades[0];
+  target.head.x = grenade.x;
+  target.head.y = grenade.y;
+  room.step(start + 1_100, 1 / 60);
+  assert.equal(room.snapshot().grenades.length, 0);
+  assert.equal(room.snapshot().blasts.length, 1);
+  assert.equal(target.alive, false);
+});
+
+void test('one eighty swaps the head to the tail and adds escape speed', () => {
+  const room = new GameRoom('REVERSE', () => 0.5);
+  const snake = room.addPlayer('p1', 'Reverser');
+  const start = Date.now() + 2_100;
+  room.food.splice(0);
+  room.powerUps.splice(0);
+  snake.head.x = 100;
+  snake.head.y = 250;
+  snake.angle = 0;
+  for (let tick = 0; tick < 60; tick += 1)
+    room.step(start + tick * (1000 / 60), 1 / 60);
+  const before = room.snapshot().snakes[0];
+  const oldest = before.body.at(-1);
+  assert.ok(oldest);
+  room.spawnPowerUp('one-eighty', { ...snake.head });
+  room.step(start + 1_010, 0);
+  room.setInput('p1', { ...NO_INPUT, power: true });
+  room.step(start + 1_011, 0);
+  const reversed = room.snapshot().snakes[0];
+  assert.ok(Math.abs(reversed.body[0].x - oldest.x) < 1e-6);
+  assert.ok(Math.abs(reversed.head.x - (oldest.x - 32)) < 1e-6);
+  assert.ok(reversed.speedBoost > 0);
+});
+
+void test('rail gun hits the first target instantly and fades after 16 ticks', () => {
+  const room = new GameRoom('RAIL', () => 0.5);
+  const shooter = room.addPlayer('p1', 'Shooter');
+  const target = room.addPlayer('p2', 'Target');
+  const behind = room.addPlayer('p3', 'Behind');
+  const start = Date.now() + 2_100;
+  room.food.splice(0);
+  room.powerUps.splice(0);
+  shooter.head = { x: 100, y: 250 };
+  shooter.angle = 0;
+  target.head = { x: 300, y: 250 };
+  behind.head = { x: 500, y: 250 };
+  room.step(start, 0);
+  room.spawnPowerUp('rail-gun', { ...shooter.head });
+  room.step(start + 1, 0);
+  room.setInput('p1', { ...NO_INPUT, power: true });
+  room.step(start + 2, 0);
+  assert.equal(target.alive, false);
+  assert.equal(behind.alive, true);
+  assert.equal(room.snapshot().rails.length, 1);
+  for (let tick = 0; tick < 17; tick += 1)
+    room.step(start + 20 + tick * (1000 / 60), 1 / 60);
+  assert.equal(room.snapshot().rails.length, 0);
+});
+
+void test('trident creates two independently collidable heads under one owner', () => {
+  const room = new GameRoom('TRIDENT', () => 0.5);
+  const source = room.addPlayer('p1', 'Hydra');
+  const start = Date.now() + 2_100;
+  room.food.splice(0);
+  room.powerUps.splice(0);
+  source.head = { x: 500, y: 300 };
+  source.angle = 0;
+  room.step(start, 0);
+  room.spawnPowerUp('trident', { ...source.head });
+  room.step(start + 1, 0);
+  room.setInput('p1', { ...NO_INPUT, power: true });
+  room.step(start + 2, 0);
+  const heads = room
+    .snapshot()
+    .snakes.filter((snake) => snake.ownerId === 'p1');
+  assert.equal(heads.length, 3);
+  assert.equal(new Set(heads.map((snake) => snake.id)).size, 3);
+  assert.ok(heads.every((snake) => snake.ownerId === 'p1'));
+
+  const angles = new Map(heads.map((snake) => [snake.id, snake.angle]));
+  room.setInput('p1', { ...NO_INPUT, right: true });
+  room.step(start + 20, 1 / 60);
+  const turned = room
+    .snapshot()
+    .snakes.filter((snake) => snake.ownerId === 'p1');
+  assert.ok(turned.every((snake) => snake.angle !== angles.get(snake.id)));
+});
+
 void test('player latency is stored and bounded for room snapshots', () => {
   const room = new GameRoom('PING', () => 0.5);
   room.addPlayer('p1', 'Tester');

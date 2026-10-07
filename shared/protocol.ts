@@ -12,7 +12,14 @@ export type InputState = {
 
 export type FoodSnapshot = Point & { id: number };
 
-export type PowerUpType = 'speed-boost' | 'fireball';
+export type PowerUpType =
+  | 'speed-boost'
+  | 'fireball'
+  | 'jumper'
+  | 'grenade'
+  | 'one-eighty'
+  | 'rail-gun'
+  | 'trident';
 
 export type PowerUpSnapshot = Point & {
   id: number;
@@ -25,16 +32,39 @@ export type FireballSnapshot = Point & {
   ownerId: string;
 };
 
+export type GrenadeSnapshot = Point & {
+  id: number;
+  angle: number;
+  ownerId: string;
+  scale: number;
+};
+
+export type BlastSnapshot = Point & {
+  id: number;
+  radius: number;
+  progress: number;
+};
+
+export type RailSnapshot = {
+  id: number;
+  ownerId: string;
+  start: Point;
+  end: Point;
+  opacity: number;
+};
+
 export type TrailPoint = Point & { segment: number };
 
 export type SnakeSnapshot = {
   id: string;
+  ownerId: string;
   name: string;
   color: number;
   head: Point;
   body: TrailPoint[];
   angle: number;
   jump: number;
+  jumpScale: number;
   alive: boolean;
   invulnerable: boolean;
   dots: number;
@@ -52,6 +82,9 @@ export type GameSnapshot = {
   food: FoodSnapshot[];
   powerUps: PowerUpSnapshot[];
   fireballs: FireballSnapshot[];
+  grenades: GrenadeSnapshot[];
+  blasts: BlastSnapshot[];
+  rails: RailSnapshot[];
 };
 
 export type WelcomeMessage = {

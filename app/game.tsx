@@ -62,6 +62,19 @@ function getWebSocketUrl(room: string, name: string) {
   return `${protocol}//${window.location.host}/ws?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}`;
 }
 
+const POWER_UP_APPEARANCE: Record<
+  PowerUpType,
+  { color: string; icon: string; name: string }
+> = {
+  'speed-boost': { color: '#5af2ff', icon: '»', name: 'SPEED BOOST' },
+  fireball: { color: '#ff713d', icon: '●', name: 'FIREBALL' },
+  jumper: { color: '#ff67cf', icon: '↑', name: 'JUMPER' },
+  grenade: { color: '#ffd84d', icon: '✹', name: 'GRENADE' },
+  'one-eighty': { color: '#8dff67', icon: '↶', name: 'ONE EIGHTY' },
+  'rail-gun': { color: '#f5f7ff', icon: '━', name: 'RAIL GUN' },
+  trident: { color: '#ba79ff', icon: 'Ψ', name: 'TRIDENT' },
+};
+
 function drawArena(
   canvas: HTMLCanvasElement,
   snapshot: GameSnapshot | null,
@@ -152,13 +165,13 @@ function drawArena(
 
   for (const powerUp of snapshot.powerUps) {
     const pulse = 1 + Math.sin(clock * 0.006 + powerUp.id) * 0.08;
-    const isFireball = powerUp.type === 'fireball';
+    const appearance = POWER_UP_APPEARANCE[powerUp.type];
     context.save();
     context.translate(powerUp.x, powerUp.y);
     context.rotate(clock * 0.0012 + powerUp.id);
     context.shadowBlur = 24;
-    context.shadowColor = isFireball ? '#ff6b35' : '#5af2ff';
-    context.fillStyle = isFireball ? '#ff713d' : '#5af2ff';
+    context.shadowColor = appearance.color;
+    context.fillStyle = appearance.color;
     context.strokeStyle = '#fff';
     context.lineWidth = 2;
     context.beginPath();
@@ -171,7 +184,7 @@ function drawArena(
     context.font = '900 12px ui-monospace, monospace';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.fillText(isFireball ? '●' : '»', 0, -1);
+    context.fillText(appearance.icon, 0, -1);
     context.restore();
   }
 
@@ -204,8 +217,74 @@ function drawArena(
     context.stroke();
   }
 
+  for (const grenade of snapshot.grenades) {
+    context.save();
+    context.translate(grenade.x, grenade.y);
+    context.scale(grenade.scale, grenade.scale);
+    context.rotate(clock * 0.012 + grenade.id);
+    context.shadowBlur = 18;
+    context.shadowColor = '#ffd84d';
+    context.fillStyle = '#1c2430';
+    context.strokeStyle = '#ffd84d';
+    context.lineWidth = 3;
+    context.beginPath();
+    context.arc(0, 0, 11, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.beginPath();
+    context.moveTo(-7, 0);
+    context.lineTo(7, 0);
+    context.moveTo(0, -7);
+    context.lineTo(0, 7);
+    context.stroke();
+    context.restore();
+  }
+
+  for (const blast of snapshot.blasts) {
+    context.save();
+    context.globalAlpha = 1 - blast.progress;
+    const radius = blast.radius * (0.22 + blast.progress * 0.78);
+    const glow = context.createRadialGradient(
+      blast.x,
+      blast.y,
+      radius * 0.25,
+      blast.x,
+      blast.y,
+      radius,
+    );
+    glow.addColorStop(0, 'rgba(255,250,190,.9)');
+    glow.addColorStop(0.35, 'rgba(255,155,45,.7)');
+    glow.addColorStop(1, 'rgba(255,66,20,0)');
+    context.fillStyle = glow;
+    context.beginPath();
+    context.arc(blast.x, blast.y, radius, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = '#ffd84d';
+    context.lineWidth = 4;
+    context.stroke();
+    context.restore();
+  }
+
+  for (const rail of snapshot.rails) {
+    context.save();
+    context.globalAlpha = rail.opacity;
+    context.lineCap = 'round';
+    context.shadowBlur = 22;
+    context.shadowColor = '#dffcff';
+    context.strokeStyle = '#ffffff';
+    context.lineWidth = 5;
+    context.beginPath();
+    context.moveTo(rail.start.x, rail.start.y);
+    context.lineTo(rail.end.x, rail.end.y);
+    context.stroke();
+    context.strokeStyle = '#58e9ff';
+    context.lineWidth = 1.5;
+    context.stroke();
+    context.restore();
+  }
+
   for (const snake of snapshot.snakes)
-    drawSnake(context, snake, snake.id === playerId, clock);
+    drawSnake(context, snake, snake.ownerId === playerId, clock);
   context.restore();
 }
 
@@ -216,7 +295,7 @@ function drawSnake(
   clock: number,
 ) {
   if (!snake.alive) return;
-  const headScale = 1 + snake.jump * 0.2;
+  const headScale = snake.jumpScale;
   const head = snake.head;
 
   if (snake.jump > 0.02) {
@@ -332,10 +411,10 @@ function drawSnake(
   );
 
   if (snake.powerUp) {
-    const isFireball = snake.powerUp === 'fireball';
+    const appearance = POWER_UP_APPEARANCE[snake.powerUp];
     const iconX = head.x - Math.cos(snake.angle) * 23;
     const iconY = head.y - Math.sin(snake.angle) * 23;
-    context.fillStyle = isFireball ? '#ff713d' : '#5af2ff';
+    context.fillStyle = appearance.color;
     context.shadowBlur = 12;
     context.shadowColor = context.fillStyle;
     context.beginPath();
@@ -346,9 +425,7 @@ function drawSnake(
 }
 
 function powerUpName(powerUp: PowerUpType | null) {
-  if (powerUp === 'speed-boost') return 'SPEED BOOST';
-  if (powerUp === 'fireball') return 'FIREBALL';
-  return 'EMPTY';
+  return powerUp ? POWER_UP_APPEARANCE[powerUp].name : 'EMPTY';
 }
 
 export function DangerNoodleGame() {
@@ -581,7 +658,16 @@ export function DangerNoodleGame() {
     setMusicEnabled(nextEnabled);
   };
 
-  const localPlayer = snapshot?.snakes.find((snake) => snake.id === playerId);
+  const localHeads = snapshot?.snakes.filter(
+    (snake) => snake.ownerId === playerId,
+  );
+  const localPlayer =
+    localHeads?.find((snake) => snake.alive && snake.powerUp) ??
+    localHeads?.find((snake) => snake.alive) ??
+    localHeads?.find((snake) => snake.id === playerId);
+  const scoreboard = snapshot?.snakes.filter(
+    (snake) => snake.id === snake.ownerId,
+  );
 
   return (
     <main className="game-shell">
@@ -692,15 +778,15 @@ export function DangerNoodleGame() {
         {joined && snapshot && (
           <div className="arena-hud">
             <div className="player-count">
-              <Users /> {snapshot.snakes.length} ONLINE
+              <Users /> {scoreboard?.length ?? 0} ONLINE
             </div>
             <div className="score-strip">
-              {[...snapshot.snakes]
+              {[...(scoreboard ?? [])]
                 .sort((a, b) => b.dots - a.dots)
                 .map((snake) => (
                   <div
                     key={snake.id}
-                    className={snake.id === playerId ? 'is-you' : ''}
+                    className={snake.ownerId === playerId ? 'is-you' : ''}
                   >
                     <span
                       style={{ backgroundColor: `hsl(${snake.color} 90% 65%)` }}
