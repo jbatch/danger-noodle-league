@@ -59,7 +59,9 @@ function proxyHeaders(headers: Record<string, string | string[] | undefined>) {
   );
 }
 
-export function createGameServer(frontendUrl = process.env.DEV_FRONTEND_URL) {
+export function createGameServer(
+  frontendUrl = process.env.FRONTEND_URL || process.env.DEV_FRONTEND_URL,
+) {
   const rooms = new Map<string, GameRoom>();
   let nextPlayerId = 1;
   const frontend = frontendUrl ? new URL(frontendUrl) : null;

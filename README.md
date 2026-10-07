@@ -63,4 +63,42 @@ npm test
 npm run build
 ```
 
+## Docker production deployment
+
+Pushes to `main` run the tests and production build, then publish these images
+to GitHub Container Registry:
+
+- `ghcr.io/jbatch/danger-noodle-league:latest`
+- `ghcr.io/jbatch/danger-noodle-league:<git-sha>`
+
+Set the optional repository Actions variable `NEXT_PUBLIC_SITE_URL` to the
+public HTTPS origin if Open Graph metadata should use the production hostname.
+Gameplay WebSockets use the current page origin, so they require no separate
+URL setting with the Caddy setup below.
+
+On the production server, authenticate to GHCR if the package is private, copy
+`docker-compose.yml`, then run:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+The Compose service binds container port 3000 to `127.0.0.1:3000` by default.
+Set `DNL_PORT` in the server's `.env` if that host port is already occupied.
+With host-installed Caddy, the complete site configuration is simply:
+
+```caddyfile
+noodle.example.com {
+  reverse_proxy 127.0.0.1:3000
+}
+```
+
+Caddy handles WebSocket upgrades automatically. No volume, application secret,
+or special Compose network is required. Keep this deployment at one replica:
+rooms are held in memory, so deployments/restarts clear active games and
+multiple replicas would require sticky routing or shared room state. If Caddy
+also runs in Docker, attach both services to the same Docker network and proxy
+to `danger-noodle-league:3000` instead of the host-loopback binding.
+
 The simulation and transport are deliberately separate from the renderer. Future levels, terrain, hazards, power-ups, and modes can be added to the server state without replacing the networking layer.
