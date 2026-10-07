@@ -2,7 +2,7 @@
 
 A lightweight, room-based multiplayer snake arena inspired by Viper League. The browser renders the game on a canvas while an authoritative WebSocket server owns movement, pickups, collisions, jumping, growth, and respawning.
 
-The reverse-engineered replication target—including original movement, jumping, trails, collisions, terrain, power-ups, modes, timers, and known quirks—is maintained in [docs/viper-league-behaviour-reference.md](docs/viper-league-behaviour-reference.md).
+The reverse-engineered replication target—including original movement, jumping, trails, collisions, terrain, power-ups, modes, timers, level data, recovered assets, and known quirks—is maintained in [docs/viper-league-behaviour-reference.md](docs/viper-league-behaviour-reference.md). The implementation and release gates are tracked in [docs/production-readiness-todo.md](docs/production-readiness-todo.md).
 
 ## First-draft mechanics
 
@@ -18,6 +18,7 @@ The reverse-engineered replication target—including original movement, jumping
 - Original-style grenade arcs, tall jumps, instant rail shots, tail reversal,
   and multi-head Trident control
 - Original-style 60 Hz movement, turning, jump timing, and trail gaps
+- Event-driven gameplay sound effects with separate persisted music and SFX mutes
 - Self- and opponent-tail collisions
 - Room codes and copyable invite URLs
 - Server-authoritative simulation for all players in a room
@@ -32,6 +33,8 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). Create a room, then use **Room → Copy** and open the copied URL in another browser or private window.
+
+For the fast gameplay test room, open [http://localhost:3000/?dev=true](http://localhost:3000/?dev=true). It skips the lobby, forces the empty **Void** map, and places one of each core power-up in the arena. Normal rooms can select any of the 13 recovered default maps from the lobby; the selection is preserved in invite links.
 
 The game backend owns public port `3000`, handles `/ws` directly, and proxies ordinary page and HMR traffic internally to a loopback-only Vite server on port `3001`. Browsers and reverse proxies therefore need only one entry point. Set `PORT`, `FRONTEND_PORT`, or `GAME_HOST` to change those bindings. Set `NEXT_PUBLIC_WS_URL` only when the WebSocket server is hosted at a different public URL.
 

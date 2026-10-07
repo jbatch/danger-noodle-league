@@ -126,14 +126,14 @@ input {
   align-items: center;
   gap: 9px;
 }
-.music-button {
+.audio-button {
   width: 34px;
   height: 34px;
   border-color: var(--border);
   background: #0f1118;
   color: #dfff4f;
 }
-.music-button:hover {
+.audio-button:hover {
   background: #171b20;
   color: #edff8a;
 }
@@ -152,6 +152,10 @@ input {
 }
 .status-connected svg {
   filter: drop-shadow(0 0 5px #cfff58);
+}
+.dev-pill {
+  color: #5af2ff;
+  border-color: rgba(90, 242, 255, 0.35);
 }
 .room-button {
   position: relative;
@@ -291,6 +295,29 @@ input {
   height: 40px;
   border-color: var(--border);
   background: #11141b;
+}
+.level-picker-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 8px;
+  align-items: stretch;
+}
+.level-preview {
+  width: 72px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background-position: center;
+  background-size: cover;
+}
+.level-picker-row [data-slot='select-trigger'] {
+  width: 100%;
+  height: 40px;
+  border-radius: 5px;
+  background: #0b0d12;
+  color: white;
+  font-family: var(--font-geist-mono);
+  text-transform: uppercase;
 }
 .enter-button {
   height: 44px;

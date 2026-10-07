@@ -8,10 +8,11 @@ import {
   ArrowRight,
   ArrowUp,
   Copy,
+  Music2,
   Radio,
   RotateCcw,
   Users,
-  Volume2,
+  Volume1,
   VolumeX,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -19,14 +20,24 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Kbd } from '@/components/ui/kbd';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
+  type GameEvent,
   type GameSnapshot,
   type InputState,
   type PowerUpType,
   type ServerMessage,
   type SnakeSnapshot,
 } from '@/shared/protocol';
+import { getLevel, LEVELS } from '@/shared/levels.generated';
+import type { CompiledLevel, LevelTile } from '@/shared/levels';
 
 type ConnectionState =
   | 'idle'
@@ -50,16 +61,24 @@ function makeRoomCode() {
   ).join('');
 }
 
-function getWebSocketUrl(room: string, name: string) {
+function getWebSocketUrl(room: string, name: string, devMode: boolean) {
+  const levelId = new URLSearchParams(window.location.search).get('level');
   const configured = process.env.NEXT_PUBLIC_WS_URL;
   if (configured) {
     const url = new URL(configured);
     url.searchParams.set('room', room);
     url.searchParams.set('name', name);
+    if (devMode) url.searchParams.set('dev', 'true');
+    if (levelId) url.searchParams.set('level', levelId);
     return url.toString();
   }
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}`;
+  const url = new URL(`${protocol}//${window.location.host}/ws`);
+  url.searchParams.set('room', room);
+  url.searchParams.set('name', name);
+  if (devMode) url.searchParams.set('dev', 'true');
+  if (levelId) url.searchParams.set('level', levelId);
+  return url.toString();
 }
 
 const POWER_UP_APPEARANCE: Record<
@@ -74,6 +93,167 @@ const POWER_UP_APPEARANCE: Record<
   'rail-gun': { color: '#f5f7ff', icon: '━', name: 'RAIL GUN' },
   trident: { color: '#ba79ff', icon: 'Ψ', name: 'TRIDENT' },
 };
+
+const SFX_LIBRARY = {
+  jump: { source: '/audio/sfx/jump.ogg', volume: 0.5 },
+  land: { source: '/audio/sfx/land.ogg', volume: 0.45 },
+  food: { source: '/audio/sfx/eat-chew.wav', volume: 0.38 },
+  death: { source: '/audio/sfx/explosion.wav', volume: 0.58 },
+  'fireball-launch': {
+    source: '/audio/sfx/Fireball_Launch5.wav',
+    volume: 0.5,
+  },
+  'fireball-impact': {
+    source: '/audio/sfx/Explo_Small_02.wav',
+    volume: 0.48,
+  },
+  'grenade-explosion': {
+    source: '/audio/sfx/grenade_explosion.ogg',
+    volume: 0.58,
+  },
+  'rail-gun': {
+    source: '/audio/sfx/EnergyRifle_Impact1.wav',
+    volume: 0.52,
+  },
+  'speed-boost': {
+    source: '/audio/sfx/Pickup_Speed02.wav',
+    volume: 0.42,
+  },
+  'one-eighty': {
+    source: '/audio/sfx/Magic_Appear01.wav',
+    volume: 0.42,
+  },
+  trident: {
+    source: '/audio/sfx/Magic_Respawn03.wav',
+    volume: 0.48,
+  },
+  'pickup-speed-boost': {
+    source: '/audio/sfx/Pickup_Speed02.wav',
+    volume: 0.42,
+  },
+  'pickup-fireball': {
+    source: '/audio/sfx/Pickup_Fire.wav',
+    volume: 0.42,
+  },
+  'pickup-jumper': {
+    source: '/audio/sfx/Pickup_Magic_Speed04.wav',
+    volume: 0.42,
+  },
+  'pickup-grenade': {
+    source: '/audio/sfx/Gun_Ammo_Pickup04.wav',
+    volume: 0.42,
+  },
+  'pickup-one-eighty': {
+    source: '/audio/sfx/Magic_Appear01.wav',
+    volume: 0.42,
+  },
+  'pickup-rail-gun': {
+    source: '/audio/sfx/Pickup_Scifi_Energy01.wav',
+    volume: 0.42,
+  },
+  'pickup-trident': {
+    source: '/audio/sfx/Pickup_MiscSwish01.wav',
+    volume: 0.42,
+  },
+} as const;
+
+type SfxKey = keyof typeof SFX_LIBRARY;
+type SfxPool = Map<SfxKey, { cursor: number; voices: HTMLAudioElement[] }>;
+
+function soundForEvent(event: GameEvent): SfxKey | null {
+  if (event.type === 'power-up-collected' && event.powerUp)
+    return `pickup-${event.powerUp}`;
+  const sounds: Partial<Record<GameEvent['type'], SfxKey>> = {
+    jump: 'jump',
+    land: 'land',
+    'food-collected': 'food',
+    'snake-death': 'death',
+    'speed-boost': 'speed-boost',
+    'fireball-launched': 'fireball-launch',
+    'fireball-impact': 'fireball-impact',
+    'grenade-explosion': 'grenade-explosion',
+    'one-eighty': 'one-eighty',
+    'rail-gun': 'rail-gun',
+    trident: 'trident',
+  };
+  return sounds[event.type] ?? null;
+}
+
+function stopSfx(pool: SfxPool) {
+  for (const sound of pool.values()) {
+    for (const voice of sound.voices) {
+      voice.pause();
+      voice.currentTime = 0;
+    }
+  }
+}
+
+const levelImageCache = new Map<string, HTMLImageElement>();
+
+function levelImage(source: string) {
+  let image = levelImageCache.get(source);
+  if (!image && typeof Image !== 'undefined') {
+    image = new Image();
+    image.src = source;
+    levelImageCache.set(source, image);
+  }
+  return image;
+}
+
+function drawTiles(
+  context: CanvasRenderingContext2D,
+  tiles: readonly LevelTile[],
+  source: string,
+  fallback: string,
+  excluded = new Set<number>(),
+) {
+  const image = levelImage(source);
+  for (const tile of tiles) {
+    if (excluded.has(tile.id)) continue;
+    if (image?.complete && image.naturalWidth > 0) {
+      context.drawImage(
+        image,
+        tile.frame * 32,
+        0,
+        32,
+        32,
+        tile.x,
+        tile.y,
+        32,
+        32,
+      );
+    } else {
+      context.fillStyle = fallback;
+      context.fillRect(tile.x, tile.y, 32, 32);
+    }
+  }
+}
+
+function drawLevel(
+  context: CanvasRenderingContext2D,
+  level: CompiledLevel,
+  destroyedWalls: readonly number[],
+) {
+  drawTiles(
+    context,
+    level.terrain,
+    '/levels/tiles/terrainSheet.png',
+    'rgba(91, 144, 180, .45)',
+  );
+  drawTiles(
+    context,
+    level.walls,
+    '/levels/tiles/wallTileSheet.png',
+    '#4d5666',
+    new Set(destroyedWalls),
+  );
+  drawTiles(
+    context,
+    level.overlays,
+    '/levels/tiles/overlaySheet.png',
+    'rgba(255, 255, 255, .08)',
+  );
+}
 
 function drawArena(
   canvas: HTMLCanvasElement,
@@ -138,6 +318,8 @@ function drawArena(
     context.restore();
     return;
   }
+
+  drawLevel(context, getLevel(snapshot.levelId), snapshot.destroyedWalls);
 
   for (const food of snapshot.food) {
     const pulse = 1 + Math.sin(clock * 0.004 + food.id) * 0.12;
@@ -280,6 +462,17 @@ function drawArena(
     context.strokeStyle = '#58e9ff';
     context.lineWidth = 1.5;
     context.stroke();
+    context.restore();
+  }
+
+  for (const trail of snapshot.detachedTrails) {
+    context.save();
+    context.fillStyle = `hsl(${trail.color} 76% 54% / 0.7)`;
+    for (const point of trail.body) {
+      context.beginPath();
+      context.arc(point.x, point.y, 2.5, 0, Math.PI * 2);
+      context.fill();
+    }
     context.restore();
   }
 
@@ -431,6 +624,10 @@ function powerUpName(powerUp: PowerUpType | null) {
 export function DangerNoodleGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const sfxPoolRef = useRef<SfxPool>(new Map());
+  const sfxEnabledRef = useRef(true);
+  const sfxUnlockedRef = useRef(false);
+  const lastEventIdRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const snapshotRef = useRef<GameSnapshot | null>(null);
   const inputRef = useRef<InputState>({ ...EMPTY_INPUT });
@@ -439,17 +636,20 @@ export function DangerNoodleGame() {
     () => undefined,
   );
   const sequenceRef = useRef(0);
+  const devConnectedRef = useRef(false);
   const [snapshot, setSnapshot] = useState<GameSnapshot | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [status, setStatus] = useState<ConnectionState>('idle');
   const [name, setName] = useState('Danger Noodle');
   const [room, setRoom] = useState('NOODLE');
+  const [selectedLevel, setSelectedLevel] = useState('empty');
   const [joined, setJoined] = useState(false);
   const [copied, setCopied] = useState(false);
   const [musicEnabled, setMusicEnabled] = useState(true);
+  const [sfxEnabled, setSfxEnabled] = useState(true);
 
   useEffect(() => {
-    const audio = new Audio('/snakes-theme.ogg');
+    const audio = new Audio('/audio/music/snakes-theme.ogg');
     audioRef.current = audio;
     audio.preload = 'auto';
     audio.volume = 0.38;
@@ -470,10 +670,86 @@ export function DangerNoodleGame() {
     };
   }, []);
 
+  const unlockSfx = useCallback(() => {
+    if (sfxUnlockedRef.current) return;
+    sfxUnlockedRef.current = true;
+    for (const sound of sfxPoolRef.current.values()) {
+      const voice = sound.voices[0];
+      voice.muted = true;
+      void voice
+        .play()
+        .then(() => {
+          voice.pause();
+          voice.currentTime = 0;
+        })
+        .catch(() => {
+          sfxUnlockedRef.current = false;
+        })
+        .finally(() => {
+          voice.muted = false;
+        });
+    }
+  }, []);
+
+  useEffect(() => {
+    const pool: SfxPool = new Map();
+    for (const [key, config] of Object.entries(SFX_LIBRARY) as [
+      SfxKey,
+      (typeof SFX_LIBRARY)[SfxKey],
+    ][]) {
+      const voices = Array.from({ length: 4 }, () => {
+        const voice = new Audio(config.source);
+        voice.preload = 'auto';
+        voice.volume = config.volume;
+        return voice;
+      });
+      pool.set(key, { cursor: 0, voices });
+    }
+    sfxPoolRef.current = pool;
+    const enabled = localStorage.getItem('dnl-sfx-muted') !== 'true';
+    sfxEnabledRef.current = enabled;
+    const settingsTimer = window.setTimeout(() => setSfxEnabled(enabled), 0);
+    window.addEventListener('pointerdown', unlockSfx, {
+      capture: true,
+      once: true,
+    });
+    window.addEventListener('keydown', unlockSfx, {
+      capture: true,
+      once: true,
+    });
+    return () => {
+      window.clearTimeout(settingsTimer);
+      window.removeEventListener('pointerdown', unlockSfx, { capture: true });
+      window.removeEventListener('keydown', unlockSfx, { capture: true });
+      stopSfx(pool);
+      sfxPoolRef.current = new Map();
+    };
+  }, [unlockSfx]);
+
+  const playGameEvents = useCallback((events: GameEvent[]) => {
+    const latestEventId = events.at(-1)?.id ?? 0;
+    if (lastEventIdRef.current === null) {
+      lastEventIdRef.current = latestEventId;
+      return;
+    }
+    for (const event of events) {
+      if (event.id <= lastEventIdRef.current) continue;
+      const key = soundForEvent(event);
+      const sound = key ? sfxPoolRef.current.get(key) : null;
+      if (!sound || !sfxEnabledRef.current) continue;
+      const voice = sound.voices[sound.cursor];
+      sound.cursor = (sound.cursor + 1) % sound.voices.length;
+      voice.currentTime = 0;
+      void voice.play().catch(() => undefined);
+    }
+    lastEventIdRef.current = Math.max(lastEventIdRef.current, latestEventId);
+  }, []);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams(window.location.search);
       setRoom((params.get('room') || makeRoomCode()).toUpperCase());
+      setSelectedLevel(getLevel(params.get('level')).id);
       setName(
         localStorage.getItem('dnl-name') ||
           `Noodle ${Math.floor(10 + Math.random() * 90)}`,
@@ -514,6 +790,7 @@ export function DangerNoodleGame() {
         void audioRef.current?.play().catch(() => undefined);
       }
       disconnect();
+      lastEventIdRef.current = null;
       const safeRoom =
         nextRoom
           .toUpperCase()
@@ -529,7 +806,11 @@ export function DangerNoodleGame() {
       url.searchParams.set('room', safeRoom);
       window.history.replaceState({}, '', url);
 
-      const socket = new WebSocket(getWebSocketUrl(safeRoom, safeName));
+      const devMode =
+        new URLSearchParams(window.location.search).get('dev') === 'true';
+      const socket = new WebSocket(
+        getWebSocketUrl(safeRoom, safeName, devMode),
+      );
       socketRef.current = socket;
       socket.addEventListener('open', () => {
         setStatus('connected');
@@ -540,6 +821,7 @@ export function DangerNoodleGame() {
         const message = JSON.parse(event.data) as ServerMessage;
         if (message.type === 'welcome') setPlayerId(message.playerId);
         if (message.type === 'snapshot') {
+          playGameEvents(message.events ?? []);
           snapshotRef.current = message;
           setSnapshot(message);
         }
@@ -562,12 +844,25 @@ export function DangerNoodleGame() {
       });
       socket.addEventListener('error', () => setStatus('offline'));
     },
-    [disconnect, musicEnabled, sendInput, sendPing],
+    [disconnect, musicEnabled, playGameEvents, sendInput, sendPing],
   );
 
   useEffect(() => {
     reconnectFunctionRef.current = (nextRoom, nextName) =>
       connect(nextRoom, nextName, true);
+  }, [connect]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (devConnectedRef.current) return;
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('dev') !== 'true') return;
+      devConnectedRef.current = true;
+      const devRoom = (params.get('room') || 'DEV').toUpperCase();
+      const devName = localStorage.getItem('dnl-name') || 'Dev Noodle';
+      connect(devRoom, devName);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [connect]);
 
   useEffect(() => () => disconnect(), [disconnect]);
@@ -658,6 +953,15 @@ export function DangerNoodleGame() {
     setMusicEnabled(nextEnabled);
   };
 
+  const toggleSfx = () => {
+    const nextEnabled = !sfxEnabled;
+    sfxEnabledRef.current = nextEnabled;
+    localStorage.setItem('dnl-sfx-muted', String(!nextEnabled));
+    setSfxEnabled(nextEnabled);
+    if (nextEnabled) unlockSfx();
+    else stopSfx(sfxPoolRef.current);
+  };
+
   const localHeads = snapshot?.snakes.filter(
     (snake) => snake.ownerId === playerId,
   );
@@ -687,17 +991,34 @@ export function DangerNoodleGame() {
           <Button
             variant="outline"
             size="icon"
-            className="music-button"
+            className="audio-button"
             onClick={toggleMusic}
             aria-label={musicEnabled ? 'Mute soundtrack' : 'Play soundtrack'}
             title={musicEnabled ? 'Mute soundtrack' : 'Play soundtrack'}
           >
-            {musicEnabled ? <Volume2 /> : <VolumeX />}
+            {musicEnabled ? <Music2 /> : <VolumeX />}
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="audio-button"
+            onClick={toggleSfx}
+            aria-label={
+              sfxEnabled ? 'Mute sound effects' : 'Play sound effects'
+            }
+            title={sfxEnabled ? 'Mute sound effects' : 'Play sound effects'}
+          >
+            {sfxEnabled ? <Volume1 /> : <VolumeX />}
           </Button>
           <Badge variant="outline" className={`status-pill status-${status}`}>
             <Radio data-icon="inline-start" />{' '}
             {status === 'connected' ? 'LIVE' : status.toUpperCase()}
           </Badge>
+          {snapshot?.devMode && (
+            <Badge variant="outline" className="status-pill dev-pill">
+              DEV · VOID · ALL POWERS
+            </Badge>
+          )}
           {joined && (
             <Button
               variant="outline"
@@ -767,6 +1088,40 @@ export function DangerNoodleGame() {
                 >
                   <RotateCcw />
                 </Button>
+              </div>
+              <label htmlFor="level-select">Level</label>
+              <div className="level-picker-row">
+                <div
+                  className="level-preview"
+                  aria-hidden="true"
+                  style={{
+                    backgroundImage: `url(${getLevel(selectedLevel).previewSmall})`,
+                  }}
+                />
+                <Select
+                  value={selectedLevel}
+                  onValueChange={(value) => {
+                    if (!value) return;
+                    setSelectedLevel(value);
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('level', value);
+                    window.history.replaceState({}, '', url);
+                  }}
+                >
+                  <SelectTrigger
+                    id="level-select"
+                    aria-label="Select arena level"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LEVELS.filter((level) => level.selectable).map((level) => (
+                      <SelectItem key={level.id} value={level.id}>
+                        {level.displayName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <Button type="submit" size="lg" className="enter-button">
                 ENTER ARENA <ArrowRight />
@@ -846,7 +1201,10 @@ export function DangerNoodleGame() {
           </div>
         </div>
         <p className="build-note">
-          NO WALLS · WRAPAROUND ·{' '}
+          {snapshot
+            ? getLevel(snapshot.levelId).displayName.toUpperCase()
+            : 'VOID'}{' '}
+          · WRAPAROUND ·{' '}
           {localPlayer
             ? `${localPlayer.dots} DOT${localPlayer.dots === 1 ? '' : 'S'}`
             : 'ROOM-BASED MULTIPLAYER'}

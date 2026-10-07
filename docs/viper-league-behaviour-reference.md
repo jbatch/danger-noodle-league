@@ -22,6 +22,108 @@ The deployed JavaScript was compiled from Monkey X with debug metadata intact. C
 
 These are live deployment URLs and may disappear. If we depend on a detail during implementation, preserve the conclusion and its evidence label here rather than relying on being able to fetch the build again.
 
+## Recovered level and asset inventory
+
+Audited 7 October 2026. The workspace now contains the complete machine-readable layout set for the 13 levels registered by the deployed game, plus one extra map that was present in the original asset catalogue.
+
+| Material | Available locally | Compatibility value |
+| --- | --- | --- |
+| Default TMX maps | All 13 under `public/levels/maps`: Void, Castle, Skull, Fire and Ice, Urban, Crosshairs, Noveria, Sprint 2, Corners, Ice Fortress, Sunshine, Jungle, and Bullet Hell | Exact tile geometry, spawn locations and rotations, fixed items, random spawn regions, features, and map properties |
+| Extra TMX maps | `public/levels/maps/starfield.tmx` | Original asset, but not registered in the deployed normal level list; treat as bonus/debug content until its intended status is verified |
+| Level previews | Small and medium previews for all 13 default maps under `public/levels/previews` | Sufficient for a level-selection UI; full-size previews are not required to simulate a level |
+| Gameplay tile sheets | `wallTileSheet.png`, `terrainSheet.png`, and `overlaySheet.png` under `public/levels/tiles` | Original 32-pixel frames for walls, terrain, and decorative overlays |
+| Sound effects | Jump, landing, egg collection, grenade, rail, fireball launch/clash, snake explosion, and the core pickup/activation sounds listed below | Original event cues can be wired directly by filename |
+| Music | `public/audio/music/snakes-theme.ogg` | Original looping menu/game soundtrack currently used by the prototype |
+
+The TMX files reference `../tiles/powerUpSheet.png` and `../tiles/featuresSheet.png`, which are not currently local. The original [power-up sheet](https://html-classic.itch.zone/html/583003-47568/data/levels/powerUpSheet.png) and [feature sheet](https://html-classic.itch.zone/html/583003-47568/data/levels/featuresSheet.png) remain reachable in the public deployment as of the audit date. Other absent presentation assets include the original egg, turret, portal, animated projectile, and full-size preview images. None of these omissions blocks gameplay reconstruction: the bundle identifies every frame and behaviour, so replacement 32 × 32 art can preserve the same geometry and collision semantics.
+
+Technical availability is not a redistribution licence. Before a public release, either confirm permission to ship the recovered art/audio or replace it while retaining the documented gameplay dimensions and cues.
+
+### Exact TMX decoding
+
+All recovered maps are orthogonal 40 × 21 maps using 32 × 32 tiles, yielding the original 1280 × 672 playfield. The current project already uses those world dimensions. A non-zero tile's local frame is `gid - tileset.firstgid`; global GIDs must never be treated as stable semantic IDs across maps.
+
+| Tileset | Local frame | Meaning |
+| --- | ---: | --- |
+| Terrain | 0 | Ice |
+| Terrain | 1 | Grass |
+| Terrain | 2 | Fire/lava |
+| Terrain | 3 | Water |
+| Terrain | 4 | Oil |
+| Terrain | 5 | Goal |
+| PowerUps | 0 | Egg |
+| PowerUps | 1 | Speed Boost |
+| PowerUps | 2 | Jumper |
+| PowerUps | 3 | Ghost |
+| PowerUps | 4 | Grenade |
+| PowerUps | 5 | Fireball |
+| PowerUps | 6 | One Eighty |
+| PowerUps | 7 | Shield |
+| PowerUps | 8 | Napalm |
+| PowerUps | 9 | Disco Ball |
+| Features | 0 | Paired portal; `exitX` and `exitY` are destination tile coordinates |
+| Features | 1 | Turret |
+| Features | 2 | Rotation pad |
+| Walls | 8 | Invincible wall; other used frames are destructible |
+
+Recognized tile layers are `Terrain`, `Overlay`, and `Walls`. Overlay tiles are visual only. Recognized object groups are `WallObjects`, `PowerUps`, `PowerUpSpawns`, `Features`, `DroneSpawns`, and `PlayerSpawns`. Empty legacy groups such as `WarpSpawns` can be ignored. Rectangle objects in `PowerUpSpawns` describe random spawn regions rather than single points.
+
+Tiled tile objects use a bottom-edge Y anchor in these files. The original loader centers wall, fixed-power-up, and feature tile objects with `x + 16, y - 16`; ordinary player/drone point objects use `x + 16, y + 16`. Map properties recognized by the deployed loader are `name`, `SinglePlayer`, `MaxEggs`, and `PowerUpSpawnFrequency`. Object properties cover fixed-item `lifespan`; moving-wall `vx`, `vy`, and `vr`; turret `vx`, `vy`, `vr`, `frequency`, and `rotation`; portal exits; rotator degrees; and spawn rotation, speed, and tail length.
+
+### Recovered level-specific content
+
+- Every default map contains eight explicit player spawns.
+- Bullet Hell contains two moving, rotating turrets firing every 0.25 seconds.
+- Noveria contains a fixed effectively permanent Grenade.
+- Sunshine contains eight fixed Fireballs.
+- Corners combines Ice and Oil; the other terrain-heavy maps retain their exact Ice, Grass, Fire, and Water placement.
+- Random power-up areas are preserved as authored rectangles, including maps with no random power-up region.
+
+Several original files contain stale editor metadata. Import by filename/catalogue identity and normalize these cases rather than displaying their internal values literally:
+
+- `sprint2.tmx` names its wall tileset `wallTileSheet` instead of `Walls`.
+- `sunshine.tmx` reports its map name as `Castle`.
+- Jungle, Bullet Hell, and Starfield report the generic map name `4-8`.
+- `icefortress.tmx` reports `Centre Ice`, while the deployed catalogue presents it as Ice Fortress.
+
+### Recovered sound mapping
+
+The available effects below live under `public/audio/sfx`.
+
+| Event | Original sound available locally |
+| --- | --- |
+| Basic or Jumper launch | `jump.ogg` |
+| Landing | `land.ogg` |
+| Egg collection | `eat-chew.wav` |
+| Snake death | `explosion.wav` |
+| Fireball launch | `Fireball_Launch5.wav` |
+| Fireball/fireball clash | `Explo_Small_02.wav` |
+| Grenade explosion | `grenade_explosion.ogg` |
+| Rail Gun shot | `EnergyRifle_Impact1.wav` |
+| Speed Boost pickup | `Pickup_Speed02.wav` |
+| Jumper pickup | `Pickup_Magic_Speed04.wav` |
+| Fireball pickup | `Pickup_Fire.wav` |
+| Grenade pickup | `Gun_Ammo_Pickup04.wav` |
+| Rail Gun pickup | `Pickup_Scifi_Energy01.wav` |
+| One Eighty pickup | `Magic_Appear01.wav` |
+| Trident pickup | `Pickup_MiscSwish01.wav` |
+| Trident activation | `Magic_Respawn03.wav` |
+
+`Magic_Disappear.wav` is preloaded by the deployed game, but no direct playback call was found. Two referenced cues are not currently local: `Whoosh_BigJump2`/`Whoosh_BigJump2.wav` for Speed Boost and One Eighty activation, and `Explo_EnergyFireball01.wav` for fireball impacts and wall destruction. We can recover or replace those without affecting simulation.
+
+### Level matching strategy
+
+Treat TMX as authoring/source data and compile it at build time into a validated shared TypeScript or JSON level catalogue. Do not independently reinterpret XML in the browser and game server.
+
+- The authoritative server consumes compiled walls, terrain, spawns, fixed items, features, and map properties for simulation.
+- The canvas client consumes the same immutable geometry for rendering and receives only the selected level ID plus dynamic state such as destroyed walls, moving objects, portals, and projectiles.
+- Replacement assets retain 32 × 32 frame geometry even when the visual style changes.
+- Catalogue metadata supplies the public name and preview, avoiding stale TMX `name` properties.
+- Import tests assert map dimensions, known object counts, eight player spawns, valid local GIDs, and expected special fixtures such as Bullet Hell's turrets and Sunshine's Fireballs.
+- Behaviour tests cover wall destruction/invincibility, every terrain effect, wrap-aware hazards, spawn safety, portals, turrets, rotators, and fixed/random item placement.
+
+This gives exact level topology and behaviour while keeping network authority and presentation assets independent.
+
 ## Core game loop
 
 - **Public:** local multiplayer for 2–8 players. The original has no network play.
@@ -225,7 +327,7 @@ The deployed default level list is:
 12. Jungle
 13. Bullet Hell
 
-Other level names and previews occur in bundle metadata, but the list above is what the deployed game registers for normal selection. Layouts should be reconstructed from TMX data or screenshots one level at a time and linked from this document.
+Other level names and previews occur in bundle metadata, but the list above is what the deployed game registers for normal selection. All 13 layouts are now available locally as TMX, so screenshots are visual references rather than geometry sources. `starfield.tmx` is preserved separately until its original intended status is verified.
 
 ## Modes
 

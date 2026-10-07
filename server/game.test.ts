@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import test from 'node:test';
 import { WebSocket } from 'ws';
 import {
@@ -6,10 +7,49 @@ import {
   WORLD_WIDTH,
   type ServerMessage,
 } from '../shared/protocol.ts';
-import { startGameServer } from './index.ts';
+import { createGameServer, startGameServer } from './index.ts';
 import { GAMEPLAY, GameRoom, toroidalDistance } from './simulation.ts';
 
 const NO_INPUT = { left: false, right: false, jump: false, power: false };
+
+void test('development proxy completes HTML without cache purges', async () => {
+  const frontend = createServer((_, response) => {
+    response.writeHead(200, {
+      connection: 'keep-alive',
+      'content-type': 'text/html; charset=utf-8',
+      'transfer-encoding': 'chunked',
+    });
+    response.end('<main>ready</main>');
+  });
+  await new Promise<void>((resolve, reject) => {
+    frontend.once('error', reject);
+    frontend.listen(0, '127.0.0.1', resolve);
+  });
+  const frontendAddress = frontend.address();
+  assert.ok(frontendAddress && typeof frontendAddress === 'object');
+
+  const proxy = createGameServer(`http://127.0.0.1:${frontendAddress.port}`);
+  await new Promise<void>((resolve, reject) => {
+    proxy.httpServer.once('error', reject);
+    proxy.httpServer.listen(0, '127.0.0.1', resolve);
+  });
+  const proxyAddress = proxy.httpServer.address();
+  assert.ok(proxyAddress && typeof proxyAddress === 'object');
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${proxyAddress.port}/`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    assert.equal(await response.text(), '<main>ready</main>');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('clear-site-data'), null);
+  } finally {
+    await proxy.close();
+    await new Promise<void>((resolve, reject) =>
+      frontend.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
 
 void test('toroidal distance uses the short route across an arena edge', () => {
   assert.equal(
@@ -48,6 +88,26 @@ void test('movement matches the original speed and turning constants', () => {
   );
 });
 
+void test('food and power-up collection emit ordered audio cues', () => {
+  const room = new GameRoom('PICKUPS', () => 0.5);
+  const snake = room.addPlayer('p1', 'Collector');
+  const start = Date.now() + 2_100;
+  room.food.splice(0);
+  room.powerUps.splice(0);
+  room.food.push({ id: 999, ...snake.head });
+  room.spawnPowerUp('jumper', { ...snake.head });
+
+  room.step(start, 0);
+
+  assert.deepEqual(
+    room.snapshot().events.map(({ type, powerUp }) => ({ type, powerUp })),
+    [
+      { type: 'food-collected', powerUp: undefined },
+      { type: 'power-up-collected', powerUp: 'jumper' },
+    ],
+  );
+});
+
 void test('jumping keeps its launch trajectory, skips pickups, and leaves a gap', () => {
   const room = new GameRoom('JUMP', () => 0.5);
   const snake = room.addPlayer('p1', 'Jumper');
@@ -63,22 +123,29 @@ void test('jumping keeps its launch trajectory, skips pickups, and leaves a gap'
   const groundedLength = room.snapshot().snakes[0].body.length;
   const jumpStartX = snake.head.x;
   room.food.push({ id: 999, x: jumpStartX + 28, y: 250 });
+  const jumpTicks = Math.round(GAMEPLAY.jumpDuration * GAMEPLAY.updateRate);
+  const jumpDistance = (GAMEPLAY.baseSpeed / GAMEPLAY.updateRate) * jumpTicks;
 
   room.setInput('p1', { ...NO_INPUT, jump: true, right: true });
-  for (let tick = 0; tick < 28; tick += 1)
+  for (let tick = 0; tick < jumpTicks; tick += 1)
     room.step(start + 300 + tick * (1000 / 60), 1 / 60);
   const landed = room.snapshot().snakes[0];
 
   assert.ok(
-    Math.abs(landed.head.x - (jumpStartX + 56)) < 1e-6,
-    'the basic jump crosses 56 pixels',
+    Math.abs(landed.head.x - (jumpStartX + jumpDistance)) < 1e-6,
+    'the basic jump distance follows its authoritative timing',
   );
   assert.ok(
     Math.abs(landed.head.y - 250) < 1e-6,
     'turning does not bend flight',
   );
   assert.ok(landed.angle > Math.PI / 2, 'facing can still turn in the air');
-  assert.equal(landed.jump, 0, 'the basic jump lands after 28 ticks');
+  assert.equal(landed.jump, 0, 'the basic jump lands on its configured tick');
+  assert.deepEqual(
+    room.snapshot().events.map((event) => event.type),
+    ['jump', 'land'],
+    'jump and landing cues are sequenced authoritatively',
+  );
   assert.equal(landed.dots, 0, 'airborne snakes do not collect dots');
   assert.equal(
     landed.body.length,
@@ -122,6 +189,9 @@ void test('speed boost and fireball are authoritative inventory power-ups', () =
     boostSnapshot.head.x - 100 > 4.9,
     'boost adds three pixels per tick',
   );
+  assert.ok(
+    boostRoom.snapshot().events.some((event) => event.type === 'speed-boost'),
+  );
 
   const fireRoom = new GameRoom('FIRE', () => 0.5);
   const shooter = fireRoom.addPlayer('p1', 'Shooter');
@@ -145,6 +215,19 @@ void test('speed boost and fireball are authoritative inventory power-ups', () =
     fireRoom.step(start + 20 + tick * (1000 / 60), 1 / 60);
   assert.equal(target.alive, false, 'a fireball kills a grounded target');
   assert.equal(fireRoom.snapshot().fireballs.length, 0, 'the hit consumes it');
+  assert.ok(
+    fireRoom
+      .snapshot()
+      .events.some((event) => event.type === 'fireball-launched'),
+  );
+  assert.ok(
+    fireRoom
+      .snapshot()
+      .events.some((event) => event.type === 'fireball-impact'),
+  );
+  assert.ok(
+    fireRoom.snapshot().events.some((event) => event.type === 'snake-death'),
+  );
 });
 
 void test('fireballs expire after six seconds instead of persisting forever', () => {
@@ -223,6 +306,9 @@ void test('grenades arc for 63 ticks then destroy grounded targets and trails', 
   assert.equal(room.snapshot().grenades.length, 0);
   assert.equal(room.snapshot().blasts.length, 1);
   assert.equal(target.alive, false);
+  assert.ok(
+    room.snapshot().events.some((event) => event.type === 'grenade-explosion'),
+  );
 });
 
 void test('one eighty swaps the head to the tail and adds escape speed', () => {
@@ -247,6 +333,9 @@ void test('one eighty swaps the head to the tail and adds escape speed', () => {
   assert.ok(Math.abs(reversed.body[0].x - oldest.x) < 1e-6);
   assert.ok(Math.abs(reversed.head.x - (oldest.x - 32)) < 1e-6);
   assert.ok(reversed.speedBoost > 0);
+  assert.ok(
+    room.snapshot().events.some((event) => event.type === 'one-eighty'),
+  );
 });
 
 void test('rail gun hits the first target instantly and fades after 16 ticks', () => {
@@ -269,6 +358,7 @@ void test('rail gun hits the first target instantly and fades after 16 ticks', (
   assert.equal(target.alive, false);
   assert.equal(behind.alive, true);
   assert.equal(room.snapshot().rails.length, 1);
+  assert.ok(room.snapshot().events.some((event) => event.type === 'rail-gun'));
   for (let tick = 0; tick < 17; tick += 1)
     room.step(start + 20 + tick * (1000 / 60), 1 / 60);
   assert.equal(room.snapshot().rails.length, 0);
@@ -293,6 +383,7 @@ void test('trident creates two independently collidable heads under one owner', 
   assert.equal(heads.length, 3);
   assert.equal(new Set(heads.map((snake) => snake.id)).size, 3);
   assert.ok(heads.every((snake) => snake.ownerId === 'p1'));
+  assert.ok(room.snapshot().events.some((event) => event.type === 'trident'));
   assert.ok(
     heads.every(
       (snake) =>

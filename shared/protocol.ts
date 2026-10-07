@@ -26,6 +26,26 @@ export type PowerUpSnapshot = Point & {
   type: PowerUpType;
 };
 
+export type GameEventType =
+  | 'jump'
+  | 'land'
+  | 'food-collected'
+  | 'snake-death'
+  | 'power-up-collected'
+  | 'speed-boost'
+  | 'fireball-launched'
+  | 'fireball-impact'
+  | 'grenade-explosion'
+  | 'one-eighty'
+  | 'rail-gun'
+  | 'trident';
+
+export type GameEvent = Point & {
+  id: number;
+  type: GameEventType;
+  powerUp?: PowerUpType;
+};
+
 export type FireballSnapshot = Point & {
   id: number;
   angle: number;
@@ -55,6 +75,12 @@ export type RailSnapshot = {
 
 export type TrailPoint = Point & { segment: number };
 
+export type DetachedTrailSnapshot = {
+  id: number;
+  color: number;
+  body: TrailPoint[];
+};
+
 export type SnakeSnapshot = {
   id: string;
   ownerId: string;
@@ -77,6 +103,8 @@ export type SnakeSnapshot = {
 export type GameSnapshot = {
   type: 'snapshot';
   room: string;
+  levelId: string;
+  devMode: boolean;
   serverTime: number;
   snakes: SnakeSnapshot[];
   food: FoodSnapshot[];
@@ -85,6 +113,9 @@ export type GameSnapshot = {
   grenades: GrenadeSnapshot[];
   blasts: BlastSnapshot[];
   rails: RailSnapshot[];
+  events: GameEvent[];
+  detachedTrails: DetachedTrailSnapshot[];
+  destroyedWalls: number[];
 };
 
 export type WelcomeMessage = {

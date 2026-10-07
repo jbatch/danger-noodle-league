@@ -18,16 +18,19 @@ export const metadata: Metadata = {
   ),
   title: 'Danger Noodle League',
   description: 'Room-based multiplayer snake arena combat.',
+  icons: {
+    icon: '/site/favicon.svg',
+  },
   openGraph: {
     title: 'Danger Noodle League',
     description: 'Online snake arena — eat dots, get longer, and outlast the room.',
-    images: [{ url: '/og.png', width: 1200, height: 630 }],
+    images: [{ url: '/site/og.png', width: 1200, height: 630 }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Danger Noodle League',
     description: 'Online snake arena — eat dots, get longer, and outlast the room.',
-    images: ['/og.png'],
+    images: ['/site/og.png'],
   },
 };
 

@@ -6,11 +6,16 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "levels": "node scripts/compile-levels.mjs",
+    "levels:check": "node scripts/compile-levels.mjs --check",
+    "predev": "npm run levels",
     "dev": "node scripts/dev.mjs",
     "dev:web": "vinext dev",
     "dev:server": "node server/index.ts",
+    "prebuild": "npm run levels:check",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
+    "pretest": "npm run levels:check",
     "test": "node --test server/*.test.ts",
     "lint": "oxlint",
     "format": "oxfmt"
