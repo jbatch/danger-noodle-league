@@ -541,8 +541,30 @@ export class GameRoom {
     const currentSpeed =
       Math.round((source.baseSpeed + source.speedBoost) / UPDATE_RATE) *
       UPDATE_RATE;
-    for (const offset of [-TRIDENT_ANGLE, TRIDENT_ANGLE]) {
-      const angle = normalizeAngle(source.angle + offset);
+    const branchAngles = [
+      normalizeAngle(source.angle - TRIDENT_ANGLE),
+      normalizeAngle(source.angle + TRIDENT_ANGLE),
+    ];
+    const branchPositions = branchAngles.map((angle) => ({
+      x: source.head.x + Math.cos(angle) * TRIDENT_OFFSET,
+      y: source.head.y + Math.sin(angle) * TRIDENT_OFFSET,
+    }));
+    const allX = [source.head.x, ...branchPositions.map((point) => point.x)];
+    const allY = [source.head.y, ...branchPositions.map((point) => point.y)];
+    const minX = Math.min(...allX);
+    const maxX = Math.max(...allX);
+    const minY = Math.min(...allY);
+    const maxY = Math.max(...allY);
+    const shiftX =
+      minX < 0 ? -minX : maxX > WORLD_WIDTH ? WORLD_WIDTH - maxX : 0;
+    const shiftY =
+      minY < 0 ? -minY : maxY > WORLD_HEIGHT ? WORLD_HEIGHT - maxY : 0;
+
+    source.head.x += shiftX;
+    source.head.y += shiftY;
+    for (let index = 0; index < branchAngles.length; index += 1) {
+      const angle = branchAngles[index];
+      const position = branchPositions[index];
       const id = `${source.ownerId}:h${this.nextHeadId++}`;
       const head = this.createSnake(
         id,
@@ -551,13 +573,12 @@ export class GameRoom {
         source.color,
         now,
         false,
+        {
+          x: position.x + shiftX,
+          y: position.y + shiftY,
+          angle,
+        },
       );
-      head.head = {
-        x: wrap(source.head.x + Math.cos(angle) * TRIDENT_OFFSET, WORLD_WIDTH),
-        y: wrap(source.head.y + Math.sin(angle) * TRIDENT_OFFSET, WORLD_HEIGHT),
-      };
-      head.angle = angle;
-      head.flightAngle = angle;
       head.baseSpeed = currentSpeed;
       head.input = { ...source.input };
       head.jumpWasDown = source.jumpWasDown;
@@ -838,18 +859,20 @@ export class GameRoom {
     color: number,
     now: number,
     respawns = true,
+    fixedSpawn?: Point & { angle: number },
   ): Snake {
+    const angle = fixedSpawn?.angle ?? this.random() * Math.PI * 2;
     return {
       id,
       ownerId,
       name,
       color,
       head: {
-        x: 140 + this.random() * (WORLD_WIDTH - 280),
-        y: 110 + this.random() * (WORLD_HEIGHT - 220),
+        x: fixedSpawn?.x ?? 140 + this.random() * (WORLD_WIDTH - 280),
+        y: fixedSpawn?.y ?? 110 + this.random() * (WORLD_HEIGHT - 220),
       },
       body: [],
-      angle: this.random() * Math.PI * 2,
+      angle,
       jump: 0,
       jumpScale: 1,
       alive: true,
@@ -868,7 +891,7 @@ export class GameRoom {
       jumpPeakScale: BASIC_JUMP_PEAK_SCALE,
       jumpWasDown: false,
       powerWasDown: false,
-      flightAngle: 0,
+      flightAngle: angle,
       trailSegment: 0,
       respawnAt: 0,
       respawns,

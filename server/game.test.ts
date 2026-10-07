@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { WebSocket } from 'ws';
-import { WORLD_WIDTH, type ServerMessage } from '../shared/protocol.ts';
+import {
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+  type ServerMessage,
+} from '../shared/protocol.ts';
 import { startGameServer } from './index.ts';
 import { GAMEPLAY, GameRoom, toroidalDistance } from './simulation.ts';
 
@@ -276,7 +280,7 @@ void test('trident creates two independently collidable heads under one owner', 
   const start = Date.now() + 2_100;
   room.food.splice(0);
   room.powerUps.splice(0);
-  source.head = { x: 500, y: 300 };
+  source.head = { x: 5, y: 5 };
   source.angle = 0;
   room.step(start, 0);
   room.spawnPowerUp('trident', { ...source.head });
@@ -289,6 +293,29 @@ void test('trident creates two independently collidable heads under one owner', 
   assert.equal(heads.length, 3);
   assert.equal(new Set(heads.map((snake) => snake.id)).size, 3);
   assert.ok(heads.every((snake) => snake.ownerId === 'p1'));
+  assert.ok(
+    heads.every(
+      (snake) =>
+        snake.head.x >= 0 &&
+        snake.head.x <= WORLD_WIDTH &&
+        snake.head.y >= 0 &&
+        snake.head.y <= WORLD_HEIGHT,
+    ),
+    'an edge spawn keeps the whole formation on the same side of the seam',
+  );
+  const primary = heads.find((snake) => snake.id === 'p1');
+  assert.ok(primary);
+  for (const branch of heads.filter((snake) => snake.id !== 'p1')) {
+    assert.ok(
+      Math.abs(
+        Math.hypot(
+          branch.head.x - primary.head.x,
+          branch.head.y - primary.head.y,
+        ) - 24,
+      ) < 1e-6,
+      'each branch starts beside the original head, never at a random spawn',
+    );
+  }
 
   const angles = new Map(heads.map((snake) => [snake.id, snake.angle]));
   room.setInput('p1', { ...NO_INPUT, right: true });
