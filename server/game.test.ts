@@ -326,6 +326,53 @@ void test('trident creates two independently collidable heads under one owner', 
   assert.ok(turned.every((snake) => snake.angle !== angles.get(snake.id)));
 });
 
+void test('a dead Trident head stays dead while either sibling survives', () => {
+  const room = new GameRoom('TRIDENT-LIFE', () => 0.5);
+  const source = room.addPlayer('p1', 'Hydra');
+  const start = Date.now() + 2_100;
+  room.food.splice(0);
+  room.powerUps.splice(0);
+  source.head = { x: 500, y: 300 };
+  source.angle = 0;
+  room.step(start, 0);
+  room.spawnPowerUp('trident', { ...source.head });
+  room.step(start + 1, 0);
+  room.setInput('p1', { ...NO_INPUT, power: true });
+  room.step(start + 2, 0);
+  room.setInput('p1', NO_INPUT);
+
+  const hunter = room.addPlayer('p2', 'Hunter');
+  room.step(start + 3, 0);
+  hunter.head = { x: 100, y: 300 };
+  hunter.angle = 0;
+  source.head = { x: 500, y: 300 };
+  const branches = [...room.snakes.values()].filter(
+    (snake) => snake.ownerId === 'p1' && snake.id !== 'p1',
+  );
+  branches[0].head = { x: 900, y: 100 };
+  branches[1].head = { x: 900, y: 500 };
+
+  room.spawnPowerUp('rail-gun', { ...hunter.head });
+  room.step(start + 4, 0);
+  room.setInput('p2', { ...NO_INPUT, power: true });
+  room.step(start + 5, 0);
+  assert.equal(source.alive, false, 'the original head takes the rail hit');
+  assert.equal(
+    branches.filter((head) => head.alive).length,
+    2,
+    'both Trident branches survive',
+  );
+
+  for (let tick = 0; tick < 90; tick += 1)
+    room.step(start + 20 + tick * (1000 / 60), 1 / 60);
+  assert.equal(
+    source.alive,
+    false,
+    'the ordinary respawn timer cannot create a random replacement head',
+  );
+  assert.deepEqual(source.head, { x: 500, y: 300 });
+});
+
 void test('player latency is stored and bounded for room snapshots', () => {
   const room = new GameRoom('PING', () => 0.5);
   room.addPlayer('p1', 'Tester');

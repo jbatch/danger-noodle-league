@@ -789,15 +789,21 @@ export class GameRoom {
   private killSnake(snake: Snake, now: number) {
     snake.alive = false;
     snake.deaths += 1;
-    snake.respawnAt = snake.respawns
-      ? now + RESPAWN_DELAY_MS
-      : Number.POSITIVE_INFINITY;
+    snake.respawnAt = Number.POSITIVE_INFINITY;
     snake.jump = 0;
     snake.jumpScale = 1;
     snake.jumpRemaining = 0;
     snake.body = [];
     snake.powerUp = null;
     snake.speedBoost = 0;
+
+    const ownerStillAlive = [...this.snakes.values()].some(
+      (head) => head.ownerId === snake.ownerId && head.alive,
+    );
+    if (!ownerStillAlive) {
+      const primary = this.snakes.get(snake.ownerId);
+      if (primary?.respawns) primary.respawnAt = now + RESPAWN_DELAY_MS;
+    }
   }
 
   private updateWorldSpawns(dt: number) {
@@ -838,6 +844,10 @@ export class GameRoom {
   }
 
   private respawn(snake: Snake, now: number) {
+    for (const [id, head] of this.snakes) {
+      if (id !== snake.id && head.ownerId === snake.ownerId)
+        this.snakes.delete(id);
+    }
     const fresh = this.createSnake(
       snake.id,
       snake.ownerId,
