@@ -9,9 +9,11 @@ The reverse-engineered replication target—including original movement, jumping
 - Continuous forward motion with tank steering
 - Left / right to steer (`←` / `→` or `A` / `D`)
 - Down to jump (`↓` or `S`)
-- Up reserved for the equipped power-up (`↑` or `W`)
+- Up activates the equipped power-up (`↑` or `W`)
 - Wraparound arena with no outside walls
 - Glowing dots grow the snake
+- One-slot inventory with Speed Boost and Fireball pickups
+- Original-style 60 Hz movement, turning, jump timing, and trail gaps
 - Self- and opponent-tail collisions
 - Room codes and copyable invite URLs
 - Server-authoritative simulation for all players in a room

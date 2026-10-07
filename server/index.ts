@@ -9,7 +9,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import type { ClientMessage, InputState } from '../shared/protocol.ts';
 import { GameRoom } from './simulation.ts';
 
-const STEP_RATE = 30;
+const STEP_RATE = 60;
 const SNAPSHOT_RATE = 20;
 
 type PlayerSocket = WebSocket & { playerId?: string; roomId?: string };

@@ -23,6 +23,7 @@ import {
   WORLD_WIDTH,
   type GameSnapshot,
   type InputState,
+  type PowerUpType,
   type ServerMessage,
   type SnakeSnapshot,
 } from '@/shared/protocol';
@@ -149,6 +150,60 @@ function drawArena(
     context.fill();
   }
 
+  for (const powerUp of snapshot.powerUps) {
+    const pulse = 1 + Math.sin(clock * 0.006 + powerUp.id) * 0.08;
+    const isFireball = powerUp.type === 'fireball';
+    context.save();
+    context.translate(powerUp.x, powerUp.y);
+    context.rotate(clock * 0.0012 + powerUp.id);
+    context.shadowBlur = 24;
+    context.shadowColor = isFireball ? '#ff6b35' : '#5af2ff';
+    context.fillStyle = isFireball ? '#ff713d' : '#5af2ff';
+    context.strokeStyle = '#fff';
+    context.lineWidth = 2;
+    context.beginPath();
+    context.rect(-10 * pulse, -10 * pulse, 20 * pulse, 20 * pulse);
+    context.fill();
+    context.stroke();
+    context.rotate(-(clock * 0.0012 + powerUp.id));
+    context.shadowBlur = 0;
+    context.fillStyle = '#071018';
+    context.font = '900 12px ui-monospace, monospace';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(isFireball ? '●' : '»', 0, -1);
+    context.restore();
+  }
+
+  for (const fireball of snapshot.fireballs) {
+    const glow = context.createRadialGradient(
+      fireball.x,
+      fireball.y,
+      1,
+      fireball.x,
+      fireball.y,
+      28,
+    );
+    glow.addColorStop(0, '#fff7cf');
+    glow.addColorStop(0.18, '#ffca5c');
+    glow.addColorStop(0.45, 'rgba(255,78,38,.9)');
+    glow.addColorStop(1, 'rgba(255,48,20,0)');
+    context.fillStyle = glow;
+    context.beginPath();
+    context.arc(fireball.x, fireball.y, 29, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = 'rgba(255,104,48,.7)';
+    context.lineWidth = 7;
+    context.lineCap = 'round';
+    context.beginPath();
+    context.moveTo(fireball.x, fireball.y);
+    context.lineTo(
+      fireball.x - Math.cos(fireball.angle) * 24,
+      fireball.y - Math.sin(fireball.angle) * 24,
+    );
+    context.stroke();
+  }
+
   for (const snake of snapshot.snakes)
     drawSnake(context, snake, snake.id === playerId, clock);
   context.restore();
@@ -161,7 +216,7 @@ function drawSnake(
   clock: number,
 ) {
   if (!snake.alive) return;
-  const lift = snake.jump * 48;
+  const headScale = 1 + snake.jump * 0.2;
   const head = snake.head;
 
   if (snake.jump > 0.02) {
@@ -171,9 +226,9 @@ function drawSnake(
     context.beginPath();
     context.ellipse(
       head.x,
-      head.y + 10,
-      20 + snake.jump * 9,
-      8 + snake.jump * 3,
+      head.y + 8,
+      14 + snake.jump * 5,
+      5 + snake.jump * 2,
       0,
       0,
       Math.PI * 2,
@@ -196,7 +251,7 @@ function drawSnake(
       continue;
     const hue = (snake.color + index * 9) % 360;
     context.strokeStyle = `hsl(${hue} 92% ${isLocal ? 65 : 58}%)`;
-    context.lineWidth = isLocal ? 9 : 8;
+    context.lineWidth = isLocal ? 5 : 4;
     context.globalAlpha = snake.invulnerable
       ? 0.5 + Math.sin(clock * 0.02) * 0.25
       : 0.92;
@@ -213,7 +268,7 @@ function drawSnake(
     Math.hypot(head.x - firstTrailPoint.x, head.y - firstTrailPoint.y) < 28
   ) {
     context.strokeStyle = `hsl(${snake.color} 92% ${isLocal ? 65 : 58}%)`;
-    context.lineWidth = isLocal ? 9 : 8;
+    context.lineWidth = isLocal ? 5 : 4;
     context.globalAlpha = snake.invulnerable
       ? 0.5 + Math.sin(clock * 0.02) * 0.25
       : 0.92;
@@ -224,14 +279,30 @@ function drawSnake(
   }
 
   context.globalAlpha = 1;
+  if (snake.speedBoost > 0) {
+    context.strokeStyle = 'rgba(90,242,255,.68)';
+    context.lineWidth = 3;
+    context.shadowBlur = 18;
+    context.shadowColor = '#5af2ff';
+    context.beginPath();
+    context.arc(
+      head.x,
+      head.y,
+      17 + Math.sin(clock * 0.02) * 2,
+      0,
+      Math.PI * 2,
+    );
+    context.stroke();
+    context.shadowBlur = 0;
+  }
   context.shadowBlur = isLocal ? 22 : 12;
   context.shadowColor = `hsl(${snake.color} 100% 60%)`;
   context.fillStyle = isLocal ? '#ffffff' : `hsl(${snake.color} 90% 70%)`;
   context.beginPath();
   context.arc(
     head.x,
-    head.y - lift,
-    isLocal ? 12.5 : 10.5,
+    head.y,
+    (isLocal ? 12.5 : 10.5) * headScale,
     0,
     Math.PI * 2,
   );
@@ -245,10 +316,7 @@ function drawSnake(
     const ex =
       head.x + Math.cos(snake.angle) * 6 + Math.cos(eyeAngle) * side * 4;
     const ey =
-      head.y -
-      lift +
-      Math.sin(snake.angle) * 6 +
-      Math.sin(eyeAngle) * side * 4;
+      head.y + Math.sin(snake.angle) * 6 + Math.sin(eyeAngle) * side * 4;
     context.beginPath();
     context.arc(ex, ey, 1.7, 0, Math.PI * 2);
     context.stroke();
@@ -257,8 +325,30 @@ function drawSnake(
   context.font = '700 15px ui-monospace, monospace';
   context.textAlign = 'center';
   context.fillStyle = 'rgba(255,255,255,.7)';
-  context.fillText(snake.name.toUpperCase(), head.x, head.y - lift - 25);
+  context.fillText(
+    snake.name.toUpperCase(),
+    head.x,
+    head.y - 25 - snake.jump * 7,
+  );
+
+  if (snake.powerUp) {
+    const isFireball = snake.powerUp === 'fireball';
+    const iconX = head.x - Math.cos(snake.angle) * 23;
+    const iconY = head.y - Math.sin(snake.angle) * 23;
+    context.fillStyle = isFireball ? '#ff713d' : '#5af2ff';
+    context.shadowBlur = 12;
+    context.shadowColor = context.fillStyle;
+    context.beginPath();
+    context.arc(iconX, iconY, 5.5, 0, Math.PI * 2);
+    context.fill();
+  }
   context.restore();
+}
+
+function powerUpName(powerUp: PowerUpType | null) {
+  if (powerUp === 'speed-boost') return 'SPEED BOOST';
+  if (powerUp === 'fireball') return 'FIREBALL';
+  return 'EMPTY';
 }
 
 export function DangerNoodleGame() {
@@ -658,13 +748,15 @@ export function DangerNoodleGame() {
           </Kbd>
         </div>
         <div className="control-divider" />
-        <div className="control-group control-muted">
+        <div
+          className={`control-group ${localPlayer?.powerUp ? 'control-ready' : 'control-muted'}`}
+        >
           <span className="control-label">POWER-UP</span>
           <div>
             <Kbd>
               <ArrowUp />
             </Kbd>
-            <span>EMPTY</span>
+            <span>{powerUpName(localPlayer?.powerUp ?? null)}</span>
           </div>
         </div>
         <p className="build-note">

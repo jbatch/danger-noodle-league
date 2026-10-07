@@ -184,7 +184,7 @@ input {
   position: relative;
   width: min(100%, 1560px);
   max-height: calc(100dvh - 172px);
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 40 / 21;
   align-self: center;
   justify-self: center;
   overflow: hidden;
@@ -448,6 +448,24 @@ input {
   margin-left: 4px;
   font-family: var(--font-geist-mono);
   font-size: 8px;
+  letter-spacing: 0.1em;
+}
+.control-ready {
+  color: #f4f7ff;
+}
+.control-ready kbd {
+  border-color: rgba(90, 242, 255, 0.55);
+  color: #5af2ff;
+  box-shadow:
+    0 2px 0 #050609,
+    0 0 14px rgba(90, 242, 255, 0.2);
+}
+.control-ready > div > span {
+  margin-left: 4px;
+  color: #dfff4f;
+  font-family: var(--font-geist-mono);
+  font-size: 8px;
+  font-weight: 800;
   letter-spacing: 0.1em;
 }
 .control-divider {

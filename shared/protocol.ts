@@ -1,5 +1,5 @@
-export const WORLD_WIDTH = 1600;
-export const WORLD_HEIGHT = 900;
+export const WORLD_WIDTH = 1280;
+export const WORLD_HEIGHT = 672;
 
 export type Point = { x: number; y: number };
 
@@ -11,6 +11,19 @@ export type InputState = {
 };
 
 export type FoodSnapshot = Point & { id: number };
+
+export type PowerUpType = 'speed-boost' | 'fireball';
+
+export type PowerUpSnapshot = Point & {
+  id: number;
+  type: PowerUpType;
+};
+
+export type FireballSnapshot = Point & {
+  id: number;
+  angle: number;
+  ownerId: string;
+};
 
 export type TrailPoint = Point & { segment: number };
 
@@ -27,6 +40,8 @@ export type SnakeSnapshot = {
   dots: number;
   deaths: number;
   pingMs: number | null;
+  powerUp: PowerUpType | null;
+  speedBoost: number;
 };
 
 export type GameSnapshot = {
@@ -35,6 +50,8 @@ export type GameSnapshot = {
   serverTime: number;
   snakes: SnakeSnapshot[];
   food: FoodSnapshot[];
+  powerUps: PowerUpSnapshot[];
+  fireballs: FireballSnapshot[];
 };
 
 export type WelcomeMessage = {
