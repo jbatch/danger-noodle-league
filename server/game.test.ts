@@ -12,14 +12,27 @@ import { GAMEPLAY, GameRoom, toroidalDistance } from './simulation.ts';
 
 const NO_INPUT = { left: false, right: false, jump: false, power: false };
 
-void test('development proxy completes HTML without cache purges', async () => {
-  const frontend = createServer((_, response) => {
+void test('development proxy does not store HTML or JavaScript', async () => {
+  const frontend = createServer((request, response) => {
+    const isModule =
+      request.url?.startsWith('/node_modules/') ||
+      request.url?.startsWith('/@id/');
+    const isImage = request.url?.startsWith('/levels/');
     response.writeHead(200, {
       connection: 'keep-alive',
-      'content-type': 'text/html; charset=utf-8',
+      'content-type': isModule
+        ? 'text/javascript'
+        : isImage
+          ? 'image/png'
+          : 'text/html; charset=utf-8',
       'transfer-encoding': 'chunked',
+      ...(isModule || isImage
+        ? { 'cache-control': 'max-age=31536000, immutable' }
+        : {}),
     });
-    response.end('<main>ready</main>');
+    response.end(
+      isModule ? 'export {}' : isImage ? 'image' : '<main>ready</main>',
+    );
   });
   await new Promise<void>((resolve, reject) => {
     frontend.once('error', reject);
@@ -28,7 +41,9 @@ void test('development proxy completes HTML without cache purges', async () => {
   const frontendAddress = frontend.address();
   assert.ok(frontendAddress && typeof frontendAddress === 'object');
 
-  const proxy = createGameServer(`http://127.0.0.1:${frontendAddress.port}`);
+  const proxy = createGameServer(`http://127.0.0.1:${frontendAddress.port}`, {
+    developmentProxy: true,
+  });
   await new Promise<void>((resolve, reject) => {
     proxy.httpServer.once('error', reject);
     proxy.httpServer.listen(0, '127.0.0.1', resolve);
@@ -37,12 +52,36 @@ void test('development proxy completes HTML without cache purges', async () => {
   assert.ok(proxyAddress && typeof proxyAddress === 'object');
 
   try {
-    const response = await fetch(`http://127.0.0.1:${proxyAddress.port}/`, {
-      signal: AbortSignal.timeout(2_000),
-    });
-    assert.equal(await response.text(), '<main>ready</main>');
-    assert.equal(response.headers.get('cache-control'), 'no-store');
-    assert.equal(response.headers.get('clear-site-data'), null);
+    const htmlResponse = await fetch(
+      `http://127.0.0.1:${proxyAddress.port}/?dev=true&room=DEV`,
+      { signal: AbortSignal.timeout(2_000) },
+    );
+    assert.equal(htmlResponse.status, 200);
+    assert.equal(await htmlResponse.text(), '<main>ready</main>');
+    assert.equal(htmlResponse.headers.get('cache-control'), 'no-store');
+    assert.equal(htmlResponse.headers.get('clear-site-data'), null);
+    assert.equal(htmlResponse.headers.get('location'), null);
+    assert.equal(htmlResponse.headers.get('set-cookie'), null);
+
+    for (const path of [
+      '/@id/__x00__virtual:vite-rsc/entry-browser',
+      '/node_modules/.vite/deps/react.js?v=current',
+      '/node_modules/vinext/dist/shims/error-boundary.js?v=current',
+    ]) {
+      const moduleResponse: Response = await fetch(
+        `http://127.0.0.1:${proxyAddress.port}${path}`,
+      );
+      assert.equal(moduleResponse.headers.get('cache-control'), 'no-store');
+      assert.equal(moduleResponse.headers.get('clear-site-data'), null);
+    }
+
+    const imageResponse = await fetch(
+      `http://127.0.0.1:${proxyAddress.port}/levels/example.png`,
+    );
+    assert.equal(
+      imageResponse.headers.get('cache-control'),
+      'max-age=31536000, immutable',
+    );
   } finally {
     await proxy.close();
     await new Promise<void>((resolve, reject) =>

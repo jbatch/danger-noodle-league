@@ -177,6 +177,11 @@ These are required before calling the recreation feature-complete, but they need
 - [ ] Decide whether the empty Bomb Tail implementation should stay omitted.
 - [ ] Reconstruct original playlists, allowed levels/power-ups/modes, and selection UI.
 
+### Networking performance investigation
+
+- [ ] Add client and server performance telemetry for end-to-end update latency, RTT, jitter, stale/dropped snapshots, snapshot size and rate, server tick duration, event-loop lag, and encode/send cost; capture repeatable WebSocket baselines for 2-, 4-, and 8-player rooms under representative latency and packet loss.
+- [ ] Spike WebTransport/QUIC behind the existing room/session protocol, using reliable streams for control messages and datagrams for replaceable real-time state where appropriate; compare it with the WebSocket baseline for latency, jitter, bandwidth, CPU cost, behaviour on degraded networks, browser/proxy compatibility, fallback requirements, and implementation complexity before deciding whether to migrate.
+
 ### Input and platform breadth
 
 - [ ] Gamepad controls with analog steering and a verified dead zone.

@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
+  SNAKE_HEAD_RADIUS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
   type GameEvent,
@@ -499,7 +500,7 @@ function drawSnake(
     context.ellipse(
       head.x,
       head.y + 8,
-      14 + snake.jump * 5,
+      12 + snake.jump * 5,
       5 + snake.jump * 2,
       0,
       0,
@@ -560,7 +561,7 @@ function drawSnake(
     context.arc(
       head.x,
       head.y,
-      17 + Math.sin(clock * 0.02) * 2,
+      15 + Math.sin(clock * 0.02) * 2,
       0,
       Math.PI * 2,
     );
@@ -571,13 +572,7 @@ function drawSnake(
   context.shadowColor = `hsl(${snake.color} 100% 60%)`;
   context.fillStyle = isLocal ? '#ffffff' : `hsl(${snake.color} 90% 70%)`;
   context.beginPath();
-  context.arc(
-    head.x,
-    head.y,
-    (isLocal ? 12.5 : 10.5) * headScale,
-    0,
-    Math.PI * 2,
-  );
+  context.arc(head.x, head.y, SNAKE_HEAD_RADIUS * headScale, 0, Math.PI * 2);
   context.fill();
   context.shadowBlur = 0;
 
@@ -586,11 +581,11 @@ function drawSnake(
   const eyeAngle = snake.angle + Math.PI / 2;
   for (const side of [-1, 1]) {
     const ex =
-      head.x + Math.cos(snake.angle) * 6 + Math.cos(eyeAngle) * side * 4;
+      head.x + Math.cos(snake.angle) * 4.8 + Math.cos(eyeAngle) * side * 3.2;
     const ey =
-      head.y + Math.sin(snake.angle) * 6 + Math.sin(eyeAngle) * side * 4;
+      head.y + Math.sin(snake.angle) * 4.8 + Math.sin(eyeAngle) * side * 3.2;
     context.beginPath();
-    context.arc(ex, ey, 1.7, 0, Math.PI * 2);
+    context.arc(ex, ey, 1.35, 0, Math.PI * 2);
     context.stroke();
   }
 
@@ -605,14 +600,23 @@ function drawSnake(
 
   if (snake.powerUp) {
     const appearance = POWER_UP_APPEARANCE[snake.powerUp];
-    const iconX = head.x - Math.cos(snake.angle) * 23;
-    const iconY = head.y - Math.sin(snake.angle) * 23;
+    const iconX = head.x + Math.cos(eyeAngle) * 19;
+    const iconY = head.y + Math.sin(eyeAngle) * 19;
+    context.shadowBlur = 10;
+    context.shadowColor = appearance.color;
     context.fillStyle = appearance.color;
-    context.shadowBlur = 12;
-    context.shadowColor = context.fillStyle;
+    context.strokeStyle = '#fff';
+    context.lineWidth = 1.25;
     context.beginPath();
-    context.arc(iconX, iconY, 5.5, 0, Math.PI * 2);
+    context.arc(iconX, iconY, 7.5, 0, Math.PI * 2);
     context.fill();
+    context.stroke();
+    context.shadowBlur = 0;
+    context.fillStyle = '#071018';
+    context.font = '900 9px ui-monospace, monospace';
+    context.textBaseline = 'middle';
+    context.textAlign = 'center';
+    context.fillText(appearance.icon, iconX, iconY);
   }
   context.restore();
 }
@@ -983,7 +987,7 @@ export function DangerNoodleGame() {
             <span />
           </div>
           <div>
-            <p className="eyebrow">ONLINE ARENA TEST 01</p>
+            <p className="eyebrow">ONLINE ARENA TEST 03</p>
             <h1>Danger Noodle League</h1>
           </div>
         </div>
@@ -1193,11 +1197,33 @@ export function DangerNoodleGame() {
           className={`control-group ${localPlayer?.powerUp ? 'control-ready' : 'control-muted'}`}
         >
           <span className="control-label">POWER-UP</span>
-          <div>
+          <div className="power-control-status">
             <Kbd>
               <ArrowUp />
             </Kbd>
-            <span>{powerUpName(localPlayer?.powerUp ?? null)}</span>
+            {localPlayer?.powerUp ? (
+              <span
+                className="held-power-chip"
+                style={{
+                  borderColor: POWER_UP_APPEARANCE[localPlayer.powerUp].color,
+                  boxShadow: `0 0 16px ${POWER_UP_APPEARANCE[localPlayer.powerUp].color}35`,
+                }}
+              >
+                <b
+                  style={{
+                    color: POWER_UP_APPEARANCE[localPlayer.powerUp].color,
+                  }}
+                >
+                  {POWER_UP_APPEARANCE[localPlayer.powerUp].icon}
+                </b>
+                <span>
+                  <small>READY</small>
+                  <strong>{powerUpName(localPlayer.powerUp)}</strong>
+                </span>
+              </span>
+            ) : (
+              <span className="empty-power">EMPTY</span>
+            )}
           </div>
         </div>
         <p className="build-note">

@@ -1,5 +1,6 @@
 export const WORLD_WIDTH = 1280;
 export const WORLD_HEIGHT = 672;
+export const SNAKE_HEAD_RADIUS = 7;
 
 export type Point = { x: number; y: number };
 

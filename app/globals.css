@@ -471,7 +471,7 @@ input {
 .control-muted {
   opacity: 0.5;
 }
-.control-muted > div > span {
+.empty-power {
   margin-left: 4px;
   font-family: var(--font-geist-mono);
   font-size: 8px;
@@ -487,13 +487,44 @@ input {
     0 2px 0 #050609,
     0 0 14px rgba(90, 242, 255, 0.2);
 }
-.control-ready > div > span {
+.held-power-chip {
+  min-width: 116px;
+  height: 34px;
   margin-left: 4px;
-  color: #dfff4f;
+  padding: 3px 9px 3px 7px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid;
+  border-radius: 5px;
+  background: rgba(12, 15, 21, 0.92);
   font-family: var(--font-geist-mono);
-  font-size: 8px;
+}
+.held-power-chip > b {
+  width: 18px;
+  text-align: center;
+  font-size: 18px;
+  line-height: 1;
+}
+.held-power-chip > span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.held-power-chip small {
+  color: #929aa9;
+  font-size: 7px;
   font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.14em;
+}
+.held-power-chip strong {
+  color: #fff;
+  font-size: 9px;
+  line-height: 1.1;
+  font-weight: 900;
   letter-spacing: 0.1em;
+  white-space: nowrap;
 }
 .control-divider {
   width: 1px;
@@ -537,6 +568,9 @@ input {
   }
   .control-group {
     gap: 7px;
+  }
+  .control-label {
+    display: none;
   }
   .control-divider,
   .build-note {

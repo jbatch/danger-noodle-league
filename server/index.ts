@@ -23,7 +23,6 @@ const HOP_BY_HOP_HEADERS = new Set([
   'transfer-encoding',
   'upgrade',
 ]);
-
 type PlayerSocket = WebSocket & {
   playerId?: string;
   roomId?: string;
@@ -61,6 +60,9 @@ function proxyHeaders(headers: Record<string, string | string[] | undefined>) {
 
 export function createGameServer(
   frontendUrl = process.env.FRONTEND_URL || process.env.DEV_FRONTEND_URL,
+  options: { developmentProxy?: boolean } = {
+    developmentProxy: Boolean(process.env.DEV_FRONTEND_URL),
+  },
 ) {
   const rooms = new Map<string, GameRoom>();
   let nextPlayerId = 1;
@@ -87,13 +89,22 @@ export function createGameServer(
         },
         (proxyResponse) => {
           const headers = proxyHeaders(proxyResponse.headers);
-          if (
-            typeof headers['content-type'] === 'string' &&
-            headers['content-type'].startsWith('text/html')
-          ) {
+          const contentType = headers['content-type'];
+          const isHtml =
+            typeof contentType === 'string' &&
+            contentType.startsWith('text/html');
+          const isJavaScript =
+            typeof contentType === 'string' &&
+            (contentType.startsWith('text/javascript') ||
+              contentType.startsWith('application/javascript'));
+          if (options.developmentProxy && isJavaScript) {
+            // The Vinext bootstrap is unversioned while its imports point into
+            // Vite's versioned optimizer graph. Never retain development
+            // JavaScript, so the two cannot drift across server restarts.
+            headers['cache-control'] = 'no-store';
+          } else if (isHtml) {
             // Vite's module URLs carry their own version. Keep navigations
-            // fresh without making Chrome purge the entire origin cache before
-            // it can finish every document request.
+            // fresh while allowing production assets to retain their headers.
             headers['cache-control'] = 'no-store';
           }
           response.writeHead(proxyResponse.statusCode || 502, headers);
