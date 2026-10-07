@@ -1,0 +1,6 @@
+services:
+  danger-noodle-league:
+    image: ghcr.io/jbatch/danger-noodle:latest
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${DNL_PORT:-3000}:3000'
