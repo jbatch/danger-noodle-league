@@ -109,6 +109,7 @@ These are launch blockers.
 - [x] Replace one-time session badges with repeatable Survival-round commendations, round results, tie handling, and durable signed-in totals.
 - [x] Add a starter catalogue of permanent one-off account achievements with authoritative Survival unlock rules.
 - [x] Add optional backend accounts with reserved usernames, salted password hashes, durable sessions, anonymous-to-saved conversion, and in-room login/logout.
+- [x] Store accounts in transactional SQLite and migrate/delete the legacy JSON store only after a successful import.
 - [ ] Show countdown, round score, match target, winner, reconnect grace, spectator, and server-error states.
 - [ ] Keep gameplay readable at common desktop aspect ratios and high-DPI displays.
 - [x] Provide keyboard instructions in-game and prevent browser scrolling or stuck keys reliably.

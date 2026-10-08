@@ -171,6 +171,7 @@ export function createGameServer(
   const rooms = new Map<string, GameRoom>();
   const telemetry = new NetworkTelemetry();
   const accountStore = options.accountStore ?? new AccountStore();
+  let accountStoreClosed = false;
   const socketsByConnectionToken = new Map<string, PlayerSocket>();
   let nextPlayerId = 1;
   const frontend = frontendUrl ? new URL(frontendUrl) : null;
@@ -824,6 +825,10 @@ export function createGameServer(
         }
         httpServer.close((error) => (error ? reject(error) : resolve()));
       });
+    }).finally(() => {
+      if (accountStoreClosed) return;
+      accountStoreClosed = true;
+      accountStore.close();
     });
   }
 

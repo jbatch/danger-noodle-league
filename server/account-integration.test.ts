@@ -69,7 +69,10 @@ function closeSocket(socket: WebSocket) {
 
 void test('an anonymous player can convert in place and return with the saved name', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'danger-noodle-account-api-'));
-  const accountStore = new AccountStore(join(directory, 'accounts.json'));
+  const accountStore = new AccountStore(
+    join(directory, 'accounts.sqlite'),
+    join(directory, 'accounts.json'),
+  );
   const server = await startGameServer(0, { accountStore });
   const baseUrl = `http://127.0.0.1:${server.port}`;
   const gameUrl = `ws://127.0.0.1:${server.port}/ws?room=SAVE&name=Saved%20Noodle`;

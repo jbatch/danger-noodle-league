@@ -1,18 +1,25 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { createHash, scryptSync } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { AccountError, AccountStore } from './account-store.ts';
 
 function temporaryStore() {
   const directory = mkdtempSync(join(tmpdir(), 'danger-noodle-accounts-'));
-  const filePath = join(directory, 'accounts.json');
-  return { filePath, store: new AccountStore(filePath) };
+  const databasePath = join(directory, 'accounts.sqlite');
+  const legacyJsonPath = join(directory, 'accounts.json');
+  return {
+    databasePath,
+    legacyJsonPath,
+    store: new AccountStore(databasePath, legacyJsonPath),
+  };
 }
 
 void test('accounts persist salted password hashes and durable sessions', async () => {
-  const { filePath, store } = temporaryStore();
+  const { databasePath, legacyJsonPath, store } = temporaryStore();
   const registered = await store.register('Saved Noodle', 'correct horse');
 
   assert.equal(registered.account.username, 'Saved Noodle');
@@ -21,12 +28,21 @@ void test('accounts persist salted password hashes and durable sessions', async 
     registered.account,
   );
 
-  const storedFile = readFileSync(filePath, 'utf8');
-  assert.doesNotMatch(storedFile, /correct horse/);
-  assert.match(storedFile, /passwordHash/);
-  assert.doesNotMatch(storedFile, new RegExp(registered.token));
+  const storedFile = readFileSync(databasePath);
+  assert.equal(storedFile.subarray(0, 16).toString(), 'SQLite format 3\0');
+  assert.doesNotMatch(storedFile.toString(), /correct horse/);
+  assert.doesNotMatch(storedFile.toString(), new RegExp(registered.token));
+  assert.equal(existsSync(legacyJsonPath), false);
 
-  const reloaded = new AccountStore(filePath);
+  const database = new DatabaseSync(databasePath);
+  const storedAccount = database
+    .prepare('SELECT password_salt, password_hash FROM accounts')
+    .get() as { password_salt: string; password_hash: string };
+  assert.ok(storedAccount.password_salt);
+  assert.ok(storedAccount.password_hash);
+  database.close();
+
+  const reloaded = new AccountStore(databasePath, legacyJsonPath);
   assert.deepEqual(
     reloaded.accountForSession(registered.token),
     registered.account,
@@ -73,7 +89,7 @@ void test('logging out revokes only the selected session', async () => {
 });
 
 void test('commendation counts accumulate and survive a reload', async () => {
-  const { filePath, store } = temporaryStore();
+  const { databasePath, legacyJsonPath, store } = temporaryStore();
   const registered = await store.register('Award Noodle', 'long-enough');
   const first = store.addCommendations(registered.account.id, {
     winner: 1,
@@ -84,7 +100,7 @@ void test('commendation counts accumulate and survive a reload', async () => {
   const second = store.addCommendations(registered.account.id, { winner: 2 });
   assert.equal(second?.commendations.winner, 3);
 
-  const reloaded = new AccountStore(filePath);
+  const reloaded = new AccountStore(databasePath, legacyJsonPath);
   assert.equal(
     reloaded.accountForSession(registered.token)?.commendations.winner,
     3,
@@ -92,7 +108,7 @@ void test('commendation counts accumulate and survive a reload', async () => {
 });
 
 void test('achievements unlock once and survive a reload', async () => {
-  const { filePath, store } = temporaryStore();
+  const { databasePath, legacyJsonPath, store } = temporaryStore();
   const registered = await store.register('Trophy Noodle', 'long-enough');
   const first = store.unlockAchievements(registered.account.id, [
     'first-win',
@@ -104,9 +120,70 @@ void test('achievements unlock once and survive a reload', async () => {
   ]);
   assert.deepEqual(repeated?.achievements, ['first-win', 'clean-sweep']);
 
-  const reloaded = new AccountStore(filePath);
+  const reloaded = new AccountStore(databasePath, legacyJsonPath);
   assert.deepEqual(reloaded.accountForSession(registered.token)?.achievements, [
     'first-win',
     'clean-sweep',
   ]);
+});
+
+void test('legacy JSON migrates transactionally and is removed after success', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'danger-noodle-migration-'));
+  const databasePath = join(directory, 'accounts.sqlite');
+  const legacyJsonPath = join(directory, 'accounts.json');
+  const password = 'legacy-password';
+  const passwordSalt = 'legacy-salt';
+  const sessionToken = 'legacy-session-token';
+  const legacyContents = `${JSON.stringify({
+    version: 3,
+    accounts: [
+      {
+        id: 'legacy-account',
+        username: 'Legacy Noodle',
+        normalizedUsername: 'legacy noodle',
+        passwordSalt,
+        passwordHash: scryptSync(password, passwordSalt, 64, {
+          N: 16_384,
+          r: 8,
+          p: 1,
+          maxmem: 32 * 1024 * 1024,
+        }).toString('base64url'),
+        createdAt: '2026-01-01T00:00:00.000Z',
+        commendations: { winner: 4 },
+        achievements: ['first-win'],
+        sessions: [
+          {
+            tokenHash: createHash('sha256').update(sessionToken).digest('hex'),
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      },
+    ],
+  })}\n`;
+  writeFileSync(legacyJsonPath, legacyContents);
+
+  const store = new AccountStore(databasePath, legacyJsonPath);
+  assert.equal(existsSync(legacyJsonPath), false);
+  assert.equal(existsSync(databasePath), true);
+  assert.equal(store.accountForSession(sessionToken)?.commendations.winner, 4);
+  assert.deepEqual(store.accountForSession(sessionToken)?.achievements, [
+    'first-win',
+  ]);
+  writeFileSync(legacyJsonPath, legacyContents);
+  const restarted = new AccountStore(databasePath, legacyJsonPath);
+  assert.equal(existsSync(legacyJsonPath), false);
+  assert.equal(restarted.accountForSession(sessionToken)?.id, 'legacy-account');
+
+  const login = await restarted.login('Legacy Noodle', password);
+  assert.equal(login.account.id, 'legacy-account');
+});
+
+void test('failed legacy migration leaves the JSON source untouched', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'danger-noodle-migration-'));
+  const databasePath = join(directory, 'accounts.sqlite');
+  const legacyJsonPath = join(directory, 'accounts.json');
+  writeFileSync(legacyJsonPath, '{"version":999,"accounts":[]}\n');
+
+  assert.throws(() => new AccountStore(databasePath, legacyJsonPath));
+  assert.equal(existsSync(legacyJsonPath), true);
 });

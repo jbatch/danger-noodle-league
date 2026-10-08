@@ -163,7 +163,9 @@ and password; registered names are reserved from anonymous impersonation.
 Passwords are never stored directly. The backend uses a unique salt and `scrypt`
 hash for every password, stores only SHA-256 hashes of random session tokens,
 and sends the browser session in an HTTP-only same-site cookie. Local account
-data defaults to `data/accounts.json`; set `ACCOUNTS_FILE` to use another path.
+data defaults to SQLite at `data/accounts.sqlite`; set `ACCOUNTS_DB_FILE` to use
+another path. A legacy `data/accounts.json` is imported transactionally on
+startup and removed only after a successful commit.
 Accounts and lifetime commendation counts are durable. Operational and security details are in the
 [account reference](docs/accounts.md).
 

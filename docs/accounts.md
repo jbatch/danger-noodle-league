@@ -26,13 +26,14 @@ the same room at once.
 
 ## Credential and session storage
 
-The backend account file defaults to `data/accounts.json`, or the path in
-`ACCOUNTS_FILE`. Writes use a same-directory temporary file and atomic rename.
+The backend database defaults to `data/accounts.sqlite`, or the path in
+`ACCOUNTS_DB_FILE`. SQLite transactions atomically update normalized account,
+session, commendation, and achievement tables.
 
 - Passwords use Node's `scrypt` with a unique random 16-byte salt and a 64-byte
   derived key. Plaintext passwords are never written.
 - Browser sessions use 32 random bytes. Only each token's SHA-256 hash is
-  written to the account file.
+  written to the database.
 - Each account keeps at most five non-expired sessions. Sessions expire after
   30 days.
 - Cookies are `HttpOnly`, `SameSite=Lax`, and scoped to `/`. They receive the
@@ -42,8 +43,27 @@ The backend account file defaults to `data/accounts.json`, or the path in
   a random token that can bind an account action to that live connection.
 
 The Docker Compose deployment mounts the named `danger-noodle-data` volume at
-`/app/data`. Back up that volume with the rest of the service's durable data.
-Deleting it permanently removes saved accounts.
+`/app/data`. A host bind mount such as `./data:/app/data` is equally valid and
+keeps the same in-container database path. Back up that volume or directory
+with the rest of the service's durable data. Deleting it permanently removes
+saved accounts.
+
+## Legacy JSON migration
+
+At startup, the server looks for `accounts.json` beside the SQLite database, or
+at the legacy path in `ACCOUNTS_FILE`. Versions 1–3 are supported.
+
+1. SQLite schema creation completes first.
+2. Every legacy account, password hash, session, commendation count, and
+   achievement is imported inside one immediate transaction.
+3. Username conflicts or invalid input roll back the transaction and leave the
+   JSON file untouched.
+4. Only after the transaction commits is `accounts.json` deleted.
+
+The migration is idempotent if the process stops after the commit but before
+deletion: matching records are safely re-applied on the next startup. Passwords
+and active sessions remain valid because their existing hashes are copied
+without modification.
 
 ## Scope boundary
 
