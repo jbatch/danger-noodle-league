@@ -100,11 +100,14 @@ These are launch blockers.
 
 - [x] Wire event-driven sound effects for jump, land, egg collection, death, pickups, Fireball, Grenade, Rail Gun, One Eighty, and Trident.
 - [x] Add persisted volume and mute controls for music and sound effects.
+- [x] Separate recovered files into a suffixed Classic pack and add a persisted Handmade palette with per-asset fallback and a replacement checklist.
 - [ ] Recover or replace `Whoosh_BigJump2` and `Explo_EnergyFireball01.wav`.
-- [ ] Decide whether `Magic_Disappear.wav` has a useful replacement event or remains unused for compatibility.
+- [ ] Decide whether `Magic_Disappear-classic.wav` has a useful replacement event or remains unused for compatibility.
 - [ ] Recover or replace the missing power-up, feature, egg, turret, portal, and projectile art; production must not load assets from the old live deployment.
 - [x] Add a level browser using the recovered previews and authoritative catalogue names.
 - [x] Add a proper room lobby showing host, players, ready state, selected level, settings, and invite action.
+- [x] Replace one-time session badges with repeatable Survival-round commendations, round results, tie handling, and durable signed-in totals.
+- [x] Add optional backend accounts with reserved usernames, salted password hashes, durable sessions, anonymous-to-saved conversion, and in-room login/logout.
 - [ ] Show countdown, round score, match target, winner, reconnect grace, spectator, and server-error states.
 - [ ] Keep gameplay readable at common desktop aspect ratios and high-DPI displays.
 - [x] Provide keyboard instructions in-game and prevent browser scrolling or stuck keys reliably.

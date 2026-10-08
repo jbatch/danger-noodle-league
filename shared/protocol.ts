@@ -1,3 +1,5 @@
+import type { CommendationCounts, CommendationId } from './badges.ts';
+
 export const WORLD_WIDTH = 1280;
 export const WORLD_HEIGHT = 672;
 export const SNAKE_HEAD_RADIUS = 7;
@@ -44,6 +46,20 @@ export type RoomPlayerSnapshot = {
   ready: boolean;
   wins: number;
   spectator: boolean;
+  saved: boolean;
+  commendations: CommendationCounts;
+};
+
+export type AccountIdentity = {
+  id: string;
+  username: string;
+  createdAt: string;
+  commendations: CommendationCounts;
+};
+
+export type RoundCommendationAward = {
+  playerId: string;
+  commendations: CommendationId[];
 };
 
 export type PowerUpSnapshot = Point & {
@@ -156,6 +172,8 @@ export type GameSnapshot = {
   phaseEndsAt: number | null;
   roundWinnerId: string | null;
   matchWinnerId: string | null;
+  commendationEventId: number;
+  roundCommendations: RoundCommendationAward[];
   discoUntil: number | null;
   snakes: SnakeSnapshot[];
   food: FoodSnapshot[];
@@ -195,6 +213,8 @@ export type WelcomeMessage = {
   type: 'welcome';
   playerId: string;
   room: string;
+  account: AccountIdentity | null;
+  connectionToken: string;
 };
 
 export type PongMessage = {

@@ -18,11 +18,17 @@ import {
   type PowerUpType,
   type RailSnapshot,
   type RoomPlayerSnapshot,
+  type RoundCommendationAward,
   type SnakeSnapshot,
   type TrailPoint,
   type TurretShotSnapshot,
   type TurretSnapshot,
 } from '../shared/protocol.ts';
+import {
+  type CommendationCounts,
+  type CommendationId,
+  normalizeCommendationCounts,
+} from '../shared/badges.ts';
 import { getLevel, LEVELS } from '../shared/levels.generated.ts';
 import type { CompiledLevel, LevelTile } from '../shared/levels.ts';
 
@@ -151,7 +157,21 @@ type DetachedTrail = Omit<DetachedTrailSnapshot, 'body'> & {
   body: InternalTrailPoint[];
 };
 
-type RoomPlayer = RoomPlayerSnapshot & { spawnIndex: number };
+type RoundStats = {
+  eggs: number;
+  jumps: number;
+  powerUps: number;
+  damageTaken: number;
+  headsLost: number;
+  peakTail: number;
+  eliminatedAt: number | null;
+};
+
+type RoomPlayer = RoomPlayerSnapshot & {
+  spawnIndex: number;
+  roundStats: RoundStats;
+  pendingCommendations: CommendationCounts;
+};
 
 export type GameRoomOptions = {
   levelId?: string;
@@ -240,6 +260,10 @@ export class GameRoom {
   matchWinnerId: string | null = null;
   discoUntil: number | null = null;
   private roundOwners = new Set<string>();
+  private nextCommendationEventId = 1;
+  private pendingCommendationAwards: RoundCommendationAward[] = [];
+  commendationEventId = 0;
+  roundCommendations: RoundCommendationAward[] = [];
 
   constructor(
     id: string,
@@ -264,7 +288,12 @@ export class GameRoom {
     }
   }
 
-  addPlayer(id: string, name: string): Snake {
+  addPlayer(
+    id: string,
+    name: string,
+    saved = false,
+    commendations: CommendationCounts = {},
+  ): Snake {
     if (this.players.size >= 8) throw new Error('room is full');
     const color = Math.floor(this.random() * 360);
     const usedSpawns = new Set(
@@ -282,7 +311,13 @@ export class GameRoom {
       wins: 0,
       spectator:
         this.managedMatch && this.mode === 'survival' && this.phase !== 'lobby',
+      saved,
+      commendations: normalizeCommendationCounts(commendations),
       spawnIndex,
+      roundStats: this.emptyRoundStats(),
+      pendingCommendations: saved
+        ? {}
+        : normalizeCommendationCounts(commendations),
     };
     this.players.set(id, player);
     if (!this.hostId) this.hostId = id;
@@ -300,6 +335,42 @@ export class GameRoom {
     if (player.spectator) snake.alive = false;
     this.snakes.set(id, snake);
     return snake;
+  }
+
+  renamePlayer(ownerId: string, name: string, saved: boolean) {
+    const player = this.players.get(ownerId);
+    if (!player) return false;
+    const cleanName = sanitizeName(name);
+    player.name = cleanName;
+    player.saved = saved;
+    for (const snake of this.snakes.values()) {
+      if (snake.ownerId === ownerId) snake.name = cleanName;
+    }
+    return true;
+  }
+
+  playerCommendations(ownerId: string) {
+    return normalizeCommendationCounts(
+      this.players.get(ownerId)?.commendations,
+    );
+  }
+
+  pendingPlayerCommendations(ownerId: string) {
+    return normalizeCommendationCounts(
+      this.players.get(ownerId)?.pendingCommendations,
+    );
+  }
+
+  setPlayerCommendations(ownerId: string, commendations: CommendationCounts) {
+    const player = this.players.get(ownerId);
+    if (!player) return false;
+    player.commendations = normalizeCommendationCounts(commendations);
+    player.pendingCommendations = {};
+    return true;
+  }
+
+  drainCommendationAwards() {
+    return this.pendingCommendationAwards.splice(0);
   }
 
   removePlayer(ownerId: string) {
@@ -397,15 +468,24 @@ export class GameRoom {
     this.phase = 'countdown';
     this.phaseEndsAt = now + COUNTDOWN_MS;
     this.roundOwners = new Set(this.players.keys());
-    for (const player of this.players.values()) player.spectator = false;
+    this.roundCommendations = [];
+    for (const player of this.players.values()) {
+      player.spectator = false;
+      player.roundStats = this.emptyRoundStats();
+    }
     this.resetWorld(now, true);
+    this.updateRoundTailStats();
   }
 
   private endRound(winnerId: string | null, now: number) {
     if (this.phase !== 'playing' || this.mode !== 'survival') return;
     this.roundWinnerId = winnerId;
+    this.updateRoundTailStats();
     const winner = winnerId ? this.players.get(winnerId) : null;
-    if (winner) winner.wins += 1;
+    if (winner) {
+      winner.wins += 1;
+    }
+    this.awardRoundCommendations(winnerId);
     if (winner && winner.wins >= this.winsToMatch) {
       this.matchWinnerId = winner.id;
       this.phase = 'match-over';
@@ -687,6 +767,7 @@ export class GameRoom {
     this.advanceGrenades(safeDt, now);
     this.advanceFireballs(safeDt, now);
     this.advanceEffects(safeDt);
+    this.updateRoundTailStats();
     this.resolveHeadCollisions(now);
     this.resolveTrailCollisions(now);
     if (this.managedMatch && this.mode === 'survival')
@@ -704,14 +785,26 @@ export class GameRoom {
       phase: this.phase,
       mode: this.mode,
       hostId: this.hostId,
-      players: [...this.players.values()].map(
-        ({ spawnIndex: _, ...player }) => ({ ...player }),
-      ),
+      players: [...this.players.values()].map((player) => ({
+        id: player.id,
+        name: player.name,
+        color: player.color,
+        ready: player.ready,
+        wins: player.wins,
+        spectator: player.spectator,
+        saved: player.saved,
+        commendations: { ...player.commendations },
+      })),
       winsToMatch: this.winsToMatch,
       roundNumber: this.roundNumber,
       phaseEndsAt: this.phaseEndsAt,
       roundWinnerId: this.roundWinnerId,
       matchWinnerId: this.matchWinnerId,
+      commendationEventId: this.commendationEventId,
+      roundCommendations: this.roundCommendations.map((award) => ({
+        playerId: award.playerId,
+        commendations: [...award.commendations],
+      })),
       discoUntil: this.discoUntil,
       food: this.food.map((item) => ({ ...item })),
       powerUps: this.powerUps.map(
@@ -783,7 +876,108 @@ export class GameRoom {
     snake.jumpRemaining = duration;
     snake.jumpPeakScale = peakScale;
     snake.flightAngle = snake.angle;
+    const player = this.players.get(snake.ownerId);
+    if (player && this.phase === 'playing') player.roundStats.jumps += 1;
     this.emitEvent('jump', snake.head);
+  }
+
+  private emptyRoundStats(): RoundStats {
+    return {
+      eggs: 0,
+      jumps: 0,
+      powerUps: 0,
+      damageTaken: 0,
+      headsLost: 0,
+      peakTail: 0,
+      eliminatedAt: null,
+    };
+  }
+
+  private updateRoundTailStats() {
+    if (this.mode !== 'survival') return;
+    for (const ownerId of this.roundOwners) {
+      const player = this.players.get(ownerId);
+      if (!player) continue;
+      const tailLength = [...this.snakes.values()]
+        .filter((snake) => snake.ownerId === ownerId && snake.alive)
+        .reduce((total, snake) => total + snake.body.length, 0);
+      player.roundStats.peakTail = Math.max(
+        player.roundStats.peakTail,
+        tailLength,
+      );
+    }
+  }
+
+  private endingTailLength(ownerId: string) {
+    return [...this.snakes.values()]
+      .filter((snake) => snake.ownerId === ownerId && snake.alive)
+      .reduce((total, snake) => total + snake.body.length, 0);
+  }
+
+  private awardRoundCommendations(winnerId: string | null) {
+    const awards = new Map<string, CommendationId[]>();
+    const participants = [...this.roundOwners]
+      .map((ownerId) => this.players.get(ownerId))
+      .filter((player): player is RoomPlayer => Boolean(player));
+    const add = (ownerId: string, commendation: CommendationId) => {
+      const player = this.players.get(ownerId);
+      if (!player) return;
+      const current = player.commendations[commendation] ?? 0;
+      player.commendations[commendation] = current + 1;
+      if (!player.saved)
+        player.pendingCommendations[commendation] =
+          (player.pendingCommendations[commendation] ?? 0) + 1;
+      const playerAwards = awards.get(ownerId) ?? [];
+      playerAwards.push(commendation);
+      awards.set(ownerId, playerAwards);
+    };
+    const leaders = (
+      commendation: CommendationId,
+      value: (player: RoomPlayer) => number,
+      minimum = 1,
+      eligible: (player: RoomPlayer) => boolean = () => true,
+    ) => {
+      const candidates = participants.filter(eligible);
+      if (candidates.length === 0) return;
+      const maximum = Math.max(...candidates.map(value));
+      if (maximum < minimum) return;
+      for (const player of candidates)
+        if (value(player) === maximum) add(player.id, commendation);
+    };
+
+    if (winnerId) add(winnerId, 'winner');
+    leaders('longest-noodle', (player) => this.endingTailLength(player.id), 1);
+    leaders('peak-noodle', (player) => player.roundStats.peakTail, 1);
+    for (const player of participants)
+      if (player.roundStats.peakTail >= MAX_TRAIL_LENGTH)
+        add(player.id, 'maxed-out');
+    leaders('egg-lord', (player) => player.roundStats.eggs);
+    if (winnerId) {
+      const winner = this.players.get(winnerId);
+      if (
+        winner &&
+        winner.roundStats.damageTaken === 0 &&
+        winner.roundStats.headsLost === 0
+      )
+        add(winnerId, 'untouchable');
+    }
+    leaders('frequent-flyer', (player) => player.roundStats.jumps);
+    leaders('power-player', (player) => player.roundStats.powerUps);
+    leaders(
+      'survivor',
+      (player) => player.roundStats.eliminatedAt ?? -1,
+      0,
+      (player) =>
+        player.id !== winnerId && player.roundStats.eliminatedAt !== null,
+    );
+    leaders('crash-test', (player) => player.roundStats.headsLost);
+
+    this.commendationEventId = this.nextCommendationEventId++;
+    this.roundCommendations = [...awards].map(([playerId, commendations]) => ({
+      playerId,
+      commendations,
+    }));
+    this.pendingCommendationAwards.push(...this.roundCommendations);
   }
 
   private emitEvent(type: GameEventType, point: Point, powerUp?: PowerUpType) {
@@ -830,6 +1024,8 @@ export class GameRoom {
       snake.targetLength += FOOD_GROWTH;
       const owner = this.snakes.get(snake.ownerId);
       if (owner) owner.dots += 1;
+      const player = this.players.get(snake.ownerId);
+      if (player && this.phase === 'playing') player.roundStats.eggs += 1;
       this.emitEvent('food-collected', food);
     }
   }
@@ -852,6 +1048,9 @@ export class GameRoom {
   private activatePowerUp(snake: Snake, now: number) {
     const powerUp = snake.powerUp;
     snake.powerUp = null;
+    if (!powerUp) return;
+    const player = this.players.get(snake.ownerId);
+    if (player && this.phase === 'playing') player.roundStats.powerUps += 1;
     switch (powerUp) {
       case 'speed-boost':
         snake.speedBoost += SPEED_BOOST_AMOUNT;
@@ -1439,6 +1638,13 @@ export class GameRoom {
       (head) => head.ownerId === snake.ownerId && head.alive,
     );
     if (!ownerStillAlive) {
+      const player = this.players.get(snake.ownerId);
+      if (
+        player &&
+        this.phase === 'playing' &&
+        player.roundStats.eliminatedAt === null
+      )
+        player.roundStats.eliminatedAt = now;
       const primary = this.snakes.get(snake.ownerId);
       if (primary?.respawns && this.mode === 'quickplay')
         primary.respawnAt = now + RESPAWN_DELAY_MS;
@@ -1447,6 +1653,11 @@ export class GameRoom {
 
   private damageSnake(snake: Snake, amount: number, now: number) {
     if (!snake.alive || snake.invulnerable || snake.ghosted) return false;
+    const player = this.players.get(snake.ownerId);
+    if (player && this.phase === 'playing') {
+      player.roundStats.damageTaken += amount;
+      if (snake.shield <= 0) player.roundStats.headsLost += 1;
+    }
     if (snake.shield > 0) {
       snake.shield = Math.max(0, snake.shield - amount);
       if (snake.shield === 0) {

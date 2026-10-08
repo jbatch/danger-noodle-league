@@ -31,9 +31,9 @@ Audited 7 October 2026. The workspace now contains the complete machine-readable
 | Default TMX maps | All 13 under `public/levels/maps`: Void, Castle, Skull, Fire and Ice, Urban, Crosshairs, Noveria, Sprint 2, Corners, Ice Fortress, Sunshine, Jungle, and Bullet Hell | Exact tile geometry, spawn locations and rotations, fixed items, random spawn regions, features, and map properties |
 | Extra TMX maps | `public/levels/maps/starfield.tmx` | Original asset, but not registered in the deployed normal level list; treat as bonus/debug content until its intended status is verified |
 | Level previews | Small and medium previews for all 13 default maps under `public/levels/previews` | Sufficient for a level-selection UI; full-size previews are not required to simulate a level |
-| Gameplay tile sheets | `wallTileSheet.png`, `terrainSheet.png`, and `overlaySheet.png` under `public/levels/tiles` | Original 32-pixel frames for walls, terrain, and decorative overlays |
+| Gameplay tile sheets | `wallTileSheet-classic.png`, `terrainSheet-classic.png`, and `overlaySheet-classic.png` under `public/levels/tiles` | Original 32-pixel frames for walls, terrain, and decorative overlays |
 | Sound effects | Jump, landing, egg collection, grenade, rail, fireball launch/clash, snake explosion, and the core pickup/activation sounds listed below | Original event cues can be wired directly by filename |
-| Music | `public/audio/music/snakes-theme.ogg` | Original looping menu/game soundtrack currently used by the prototype |
+| Music | `public/audio/music/snakes-theme-classic.ogg` | Original looping menu/game soundtrack currently used by the Classic asset pack |
 
 The TMX files reference `../tiles/powerUpSheet.png` and `../tiles/featuresSheet.png`, which are not currently local. The original [power-up sheet](https://html-classic.itch.zone/html/583003-47568/data/levels/powerUpSheet.png) and [feature sheet](https://html-classic.itch.zone/html/583003-47568/data/levels/featuresSheet.png) remain reachable in the public deployment as of the audit date. Other absent presentation assets include the original egg, turret, portal, animated projectile, and full-size preview images. None of these omissions blocks gameplay reconstruction: the bundle identifies every frame and behaviour, so replacement 32 × 32 art can preserve the same geometry and collision semantics.
 
@@ -92,24 +92,24 @@ The available effects below live under `public/audio/sfx`.
 
 | Event | Original sound available locally |
 | --- | --- |
-| Basic or Jumper launch | `jump.ogg` |
-| Landing | `land.ogg` |
-| Egg collection | `eat-chew.wav` |
-| Snake death | `explosion.wav` |
-| Fireball launch | `Fireball_Launch5.wav` |
-| Fireball/fireball clash | `Explo_Small_02.wav` |
-| Grenade explosion | `grenade_explosion.ogg` |
-| Rail Gun shot | `EnergyRifle_Impact1.wav` |
-| Speed Boost pickup | `Pickup_Speed02.wav` |
-| Jumper pickup | `Pickup_Magic_Speed04.wav` |
-| Fireball pickup | `Pickup_Fire.wav` |
-| Grenade pickup | `Gun_Ammo_Pickup04.wav` |
-| Rail Gun pickup | `Pickup_Scifi_Energy01.wav` |
-| One Eighty pickup | `Magic_Appear01.wav` |
-| Trident pickup | `Pickup_MiscSwish01.wav` |
-| Trident activation | `Magic_Respawn03.wav` |
+| Basic or Jumper launch | `jump-classic.ogg` |
+| Landing | `land-classic.ogg` |
+| Egg collection | `eat-chew-classic.wav` |
+| Snake death | `explosion-classic.wav` |
+| Fireball launch | `Fireball_Launch5-classic.wav` |
+| Fireball/fireball clash | `Explo_Small_02-classic.wav` |
+| Grenade explosion | `grenade_explosion-classic.ogg` |
+| Rail Gun shot | `EnergyRifle_Impact1-classic.wav` |
+| Speed Boost pickup | `Pickup_Speed02-classic.wav` |
+| Jumper pickup | `Pickup_Magic_Speed04-classic.wav` |
+| Fireball pickup | `Pickup_Fire-classic.wav` |
+| Grenade pickup | `Gun_Ammo_Pickup04-classic.wav` |
+| Rail Gun pickup | `Pickup_Scifi_Energy01-classic.wav` |
+| One Eighty pickup | `Magic_Appear01-classic.wav` |
+| Trident pickup | `Pickup_MiscSwish01-classic.wav` |
+| Trident activation | `Magic_Respawn03-classic.wav` |
 
-`Magic_Disappear.wav` is preloaded by the deployed game, but no direct playback call was found. Two referenced cues are not currently local: `Whoosh_BigJump2`/`Whoosh_BigJump2.wav` for Speed Boost and One Eighty activation, and `Explo_EnergyFireball01.wav` for fireball impacts and wall destruction. We can recover or replace those without affecting simulation.
+`Magic_Disappear-classic.wav` is preloaded by the deployed game, but no direct playback call was found. Two referenced cues are not currently local: `Whoosh_BigJump2`/`Whoosh_BigJump2.wav` for Speed Boost and One Eighty activation, and `Explo_EnergyFireball01.wav` for fireball impacts and wall destruction. We can recover or replace those without affecting simulation.
 
 ### Level matching strategy
 

@@ -44,6 +44,10 @@ void test('Survival runs a host-controlled match and awards the last owner alive
   assert.equal(result.roundWinnerId, 'host');
   assert.equal(result.matchWinnerId, 'host');
   assert.equal(result.players.find((player) => player.id === 'host')?.wins, 1);
+  assert.equal(
+    result.players.find((player) => player.id === 'host')?.commendations.winner,
+    1,
+  );
 
   assert.equal(room.rematch('host', 5_000), true);
   const rematch = room.snapshot();
@@ -52,6 +56,12 @@ void test('Survival runs a host-controlled match and awards the last owner alive
   assert.equal(
     rematch.players.every((player) => player.wins === 0),
     true,
+  );
+  assert.equal(
+    rematch.players.find((player) => player.id === 'host')?.commendations
+      .winner,
+    1,
+    'commendation totals survive a rematch',
   );
 });
 

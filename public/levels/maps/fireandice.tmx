@@ -4,7 +4,7 @@
   <property name="name" value="Fire and Ice"/>
  </properties>
  <tileset firstgid="1" name="Walls" tilewidth="32" tileheight="32" tilecount="16">
-  <image source="../tiles/wallTileSheet.png" width="512" height="32"/>
+  <image source="../tiles/wallTileSheet-classic.png" width="512" height="32"/>
  </tileset>
  <tileset firstgid="17" name="PowerUps" tilewidth="32" tileheight="32" tilecount="16">
   <image source="../tiles/powerUpSheet.png" width="512" height="32"/>
@@ -13,7 +13,7 @@
   <image source="../tiles/featuresSheet.png" width="256" height="32"/>
  </tileset>
  <tileset firstgid="41" name="Terrain" tilewidth="32" tileheight="32" tilecount="8">
-  <image source="../tiles/terrainSheet.png" width="256" height="32"/>
+  <image source="../tiles/terrainSheet-classic.png" width="256" height="32"/>
  </tileset>
  <layer name="Terrain" width="40" height="21">
   <data>

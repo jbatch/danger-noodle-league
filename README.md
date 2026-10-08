@@ -26,6 +26,8 @@ The reverse-engineered replication target—including original movement, jumping
 - Survival rounds with countdowns, elimination, round wins, match winners, rematches,
   spectators, and host migration
 - Quickplay mode preserving the original fast automatic-respawn loop
+- Repeatable server-authoritative Survival commendations with round results and account totals
+- Optional saved usernames with backend password hashing and durable sign-in sessions
 - Jump slams, landing shockwaves and stuns, shield/ghost/Napalm/Disco support,
   terrain effects, destructible walls, and Bullet Hell turrets
 
@@ -124,11 +126,42 @@ noodle.example.com {
 }
 ```
 
-Caddy handles WebSocket upgrades automatically. No volume, application secret,
-or special Compose network is required. Keep this deployment at one replica:
+Caddy handles WebSocket upgrades automatically. The Compose file keeps saved
+accounts in the `danger-noodle-data` volume; include that volume in backups. No
+application secret or special Compose network is required. Keep this deployment at one replica:
 rooms are held in memory, so deployments/restarts clear active games and
 multiple replicas would require sticky routing or shared room state. If Caddy
 also runs in Docker, attach both services to the same Docker network and proxy
 to `danger-noodle-league:3000` instead of the host-loopback binding.
 
 The simulation and transport are deliberately separate from the renderer. Future levels, terrain, hazards, power-ups, and modes can be added to the server state without replacing the networking layer.
+
+## Asset palettes
+
+Recovered Viper League presentation files use a `-classic` suffix. The settings
+menu can switch between the persisted **Classic** and **Handmade** asset palettes;
+unfinished Handmade entries safely fall back to Classic. Exact filenames,
+dimensions, reference timings, and the activation workflow are tracked in the
+[Handmade asset-pack checklist](docs/handmade-asset-checklist.md).
+
+## Round commendations
+
+Every Survival round can award Winner, Longest Noodle, Peak Noodle, Maxed Out,
+Egg Lord, Untouchable, Frequent Flyer, Power Player, Survivor, and Crash Test.
+Ties award every tied player. Anonymous totals last for the room session;
+signed-in totals are saved to the account. Exact rules are documented in the
+[round commendation reference](docs/round-commendations.md).
+
+## Optional accounts
+
+Playing anonymously remains the default. The account button can convert the
+current noodle into a saved username without leaving its room or losing its
+current score and commendation totals. Players can later log in with that username
+and password; registered names are reserved from anonymous impersonation.
+
+Passwords are never stored directly. The backend uses a unique salt and `scrypt`
+hash for every password, stores only SHA-256 hashes of random session tokens,
+and sends the browser session in an HTTP-only same-site cookie. Local account
+data defaults to `data/accounts.json`; set `ACCOUNTS_FILE` to use another path.
+Accounts and lifetime commendation counts are durable. Operational and security details are in the
+[account reference](docs/accounts.md).

@@ -1,13 +1,22 @@
 import {
   createServer,
   request as createProxyRequest,
+  type IncomingMessage,
+  type ServerResponse,
   type Server as HttpServer,
 } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { connect as connectTcp } from 'node:net';
 import { pipeline } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
-import type { ClientMessage, InputState } from '../shared/protocol.ts';
+import type {
+  AccountIdentity,
+  ClientMessage,
+  InputState,
+} from '../shared/protocol.ts';
+import { AccountError, AccountStore } from './account-store.ts';
+import type { CommendationCounts } from '../shared/badges.ts';
 import { GameRoom } from './simulation.ts';
 import { encodeSnapshotPayload } from './snapshot-codec.ts';
 import { NetworkTelemetry } from './telemetry.ts';
@@ -31,7 +40,17 @@ type PlayerSocket = WebSocket & {
   roomId?: string;
   lastInputSequence?: number;
   alive?: boolean;
+  accountId?: string;
+  connectionToken?: string;
 };
+
+export type GameServerOptions = {
+  developmentProxy?: boolean;
+  accountStore?: AccountStore;
+};
+
+const ACCOUNT_COOKIE = 'dnl_session';
+const MAX_ACCOUNT_BODY_BYTES = 2_048;
 
 function cleanRoom(value: string | null) {
   const clean = (value || 'NOODLE')
@@ -43,6 +62,88 @@ function cleanRoom(value: string | null) {
 
 function cleanName(value: string | null) {
   return (value || 'Mystery Noodle').slice(0, 24);
+}
+
+function parseCookies(request: IncomingMessage) {
+  return Object.fromEntries(
+    (request.headers.cookie || '')
+      .split(';')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const separator = part.indexOf('=');
+        if (separator < 0) return [part, ''];
+        const value = part.slice(separator + 1);
+        try {
+          return [part.slice(0, separator), decodeURIComponent(value)];
+        } catch {
+          return [part.slice(0, separator), ''];
+        }
+      }),
+  );
+}
+
+function sessionToken(request: IncomingMessage) {
+  const authorization = request.headers.authorization;
+  if (authorization?.startsWith('Bearer ')) return authorization.slice(7);
+  return parseCookies(request)[ACCOUNT_COOKIE] || null;
+}
+
+function accountCookie(token: string | null, request: IncomingMessage) {
+  const forwardedProtocol = request.headers['x-forwarded-proto'];
+  const secureRequest =
+    process.env.ACCOUNT_COOKIE_SECURE === 'true' ||
+    forwardedProtocol === 'https' ||
+    (Array.isArray(forwardedProtocol) && forwardedProtocol.includes('https')) ||
+    'encrypted' in request.socket;
+  const secure = secureRequest ? '; Secure' : '';
+  return token
+    ? `${ACCOUNT_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${secure}`
+    : `${ACCOUNT_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`;
+}
+
+function sendJson(
+  response: ServerResponse,
+  status: number,
+  payload: object,
+  cookie?: string,
+) {
+  response.writeHead(status, {
+    'cache-control': 'no-store',
+    'content-type': 'application/json',
+    ...(cookie ? { 'set-cookie': cookie } : {}),
+  });
+  response.end(JSON.stringify(payload));
+}
+
+function readJsonBody(request: IncomingMessage) {
+  return new Promise<Record<string, unknown>>((resolvePromise, reject) => {
+    let bytes = 0;
+    let tooLarge = false;
+    const chunks: Buffer[] = [];
+    request.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > MAX_ACCOUNT_BODY_BYTES) {
+        tooLarge = true;
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on('end', () => {
+      try {
+        if (tooLarge) throw new Error('request body is too large');
+        const parsed = JSON.parse(
+          Buffer.concat(chunks).toString('utf8'),
+        ) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+          throw new Error('invalid JSON body');
+        resolvePromise(parsed as Record<string, unknown>);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    request.on('error', reject);
+  });
 }
 
 function isInput(value: unknown): value is InputState {
@@ -63,17 +164,238 @@ function proxyHeaders(headers: Record<string, string | string[] | undefined>) {
 
 export function createGameServer(
   frontendUrl = process.env.FRONTEND_URL || process.env.DEV_FRONTEND_URL,
-  options: { developmentProxy?: boolean } = {
+  options: GameServerOptions = {
     developmentProxy: Boolean(process.env.DEV_FRONTEND_URL),
   },
 ) {
   const rooms = new Map<string, GameRoom>();
   const telemetry = new NetworkTelemetry();
+  const accountStore = options.accountStore ?? new AccountStore();
+  const socketsByConnectionToken = new Map<string, PlayerSocket>();
   let nextPlayerId = 1;
   const frontend = frontendUrl ? new URL(frontendUrl) : null;
 
+  function anonymousName(requestedName: string) {
+    if (!accountStore.isUsernameRegistered(requestedName)) return requestedName;
+    return cleanName(`${requestedName.slice(0, 10)} Guest`);
+  }
+
+  function broadcastRoom(roomId: string) {
+    const room = rooms.get(roomId);
+    if (!room) return;
+    const encoded = encodeSnapshot(room);
+    for (const rawRoomSocket of webSockets.clients) {
+      const roomSocket = rawRoomSocket as PlayerSocket;
+      if (
+        roomSocket.readyState === WebSocket.OPEN &&
+        roomSocket.roomId === roomId
+      )
+        sendSnapshot(roomSocket, encoded);
+    }
+  }
+
+  function bindSocketToAccount(socket: PlayerSocket, account: AccountIdentity) {
+    if (!socket.playerId || !socket.roomId)
+      return 'That game connection is no longer active.';
+    const duplicate = [...webSockets.clients].some((candidate) => {
+      const roomSocket = candidate as PlayerSocket;
+      return (
+        roomSocket !== socket &&
+        roomSocket.roomId === socket.roomId &&
+        roomSocket.accountId === account.id
+      );
+    });
+    if (duplicate) return 'That account is already playing in this room.';
+    const room = rooms.get(socket.roomId);
+    if (!room?.renamePlayer(socket.playerId, account.username, true))
+      return 'That game connection is no longer active.';
+    room.setPlayerCommendations(socket.playerId, account.commendations);
+    socket.accountId = account.id;
+    broadcastRoom(socket.roomId);
+    return null;
+  }
+
+  function connectionFromBody(body: Record<string, unknown>) {
+    return typeof body.connectionToken === 'string'
+      ? socketsByConnectionToken.get(body.connectionToken)
+      : undefined;
+  }
+
+  function reserveAccountName(account: AccountIdentity, owner?: PlayerSocket) {
+    const affectedRooms = new Set<string>();
+    for (const candidate of webSockets.clients) {
+      const socket = candidate as PlayerSocket;
+      if (
+        socket === owner ||
+        socket.accountId ||
+        !socket.playerId ||
+        !socket.roomId
+      )
+        continue;
+      const room = rooms.get(socket.roomId);
+      const player = room?.players.get(socket.playerId);
+      if (
+        !player ||
+        player.name.toLocaleLowerCase('en-US') !==
+          account.username.toLocaleLowerCase('en-US')
+      )
+        continue;
+      room?.renamePlayer(socket.playerId, anonymousName(player.name), false);
+      affectedRooms.add(socket.roomId);
+    }
+    for (const roomId of affectedRooms) broadcastRoom(roomId);
+  }
+
+  async function handleAccountRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    pathname: string,
+  ) {
+    if (pathname === '/api/account/session' && request.method === 'GET') {
+      const account = accountStore.accountForSession(sessionToken(request));
+      if (!account) {
+        sendJson(
+          response,
+          401,
+          { ok: false, code: 'not-authenticated' },
+          accountCookie(null, request),
+        );
+        return;
+      }
+      sendJson(response, 200, { ok: true, account });
+      return;
+    }
+
+    if (
+      ![
+        '/api/account/register',
+        '/api/account/login',
+        '/api/account/logout',
+      ].includes(pathname) ||
+      request.method !== 'POST'
+    ) {
+      sendJson(response, 405, { ok: false, code: 'method-not-allowed' });
+      return;
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await readJsonBody(request);
+    } catch {
+      sendJson(response, 400, {
+        ok: false,
+        code: 'invalid-request',
+        error: 'Invalid account request.',
+      });
+      return;
+    }
+
+    if (pathname === '/api/account/logout') {
+      const token = sessionToken(request);
+      const account = accountStore.accountForSession(token);
+      accountStore.revokeSession(token);
+      const socket = connectionFromBody(body);
+      if (socket?.accountId && account?.id === socket.accountId) {
+        socket.accountId = undefined;
+        if (socket.playerId && socket.roomId) {
+          const room = rooms.get(socket.roomId);
+          room?.renamePlayer(
+            socket.playerId,
+            anonymousName(`${account.username.slice(0, 10)} Guest`),
+            false,
+          );
+          broadcastRoom(socket.roomId);
+        }
+      }
+      sendJson(response, 200, { ok: true }, accountCookie(null, request));
+      return;
+    }
+
+    const connectionRequested =
+      typeof body.connectionToken === 'string' && body.connectionToken !== '';
+    const socket = connectionFromBody(body);
+    if (connectionRequested && !socket) {
+      sendJson(response, 409, {
+        ok: false,
+        code: 'connection-expired',
+        error: 'That game connection has ended. Reopen the account panel.',
+      });
+      return;
+    }
+    if (socket?.accountId) {
+      sendJson(response, 409, {
+        ok: false,
+        code: 'already-authenticated',
+        error: 'This game connection is already using a saved account.',
+      });
+      return;
+    }
+
+    try {
+      const registering = pathname === '/api/account/register';
+      const result = registering
+        ? await accountStore.register(body.username, body.password)
+        : await accountStore.login(body.username, body.password);
+      if (socket) {
+        const room = socket.roomId ? rooms.get(socket.roomId) : null;
+        const sessionCommendations = socket.playerId
+          ? room?.pendingPlayerCommendations(socket.playerId)
+          : null;
+        if (sessionCommendations) {
+          const updated = accountStore.addCommendations(
+            result.account.id,
+            sessionCommendations,
+          );
+          if (updated) result.account = updated;
+        }
+        const bindError = bindSocketToAccount(socket, result.account);
+        if (bindError) {
+          accountStore.revokeSession(result.token);
+          sendJson(response, 409, {
+            ok: false,
+            code: 'account-in-use',
+            error: bindError,
+          });
+          return;
+        }
+      }
+      if (registering) reserveAccountName(result.account, socket);
+      sendJson(
+        response,
+        200,
+        { ok: true, account: result.account },
+        accountCookie(result.token, request),
+      );
+    } catch (error) {
+      if (error instanceof AccountError) {
+        const status =
+          error.code === 'username-taken'
+            ? 409
+            : error.code === 'invalid-credentials'
+              ? 401
+              : 400;
+        sendJson(response, status, {
+          ok: false,
+          code: error.code,
+          error: error.message,
+        });
+        return;
+      }
+      console.error('Account request failed', error);
+      sendJson(response, 500, {
+        ok: false,
+        code: 'account-error',
+        error: 'The account service could not complete that request.',
+      });
+    }
+  }
+
   const httpServer: HttpServer = createServer((request, response) => {
     const pathname = new URL(request.url || '/', 'http://localhost').pathname;
+    if (pathname.startsWith('/api/account/')) {
+      void handleAccountRequest(request, response, pathname);
+      return;
+    }
     if (pathname === '/health') {
       response.writeHead(200, {
         'cache-control': 'no-store',
@@ -242,7 +564,9 @@ export function createGameServer(
       telemetry.compressionNegotiatedConnections += 1;
     const url = new URL(request.url || '/', 'http://localhost');
     const roomId = cleanRoom(url.searchParams.get('room'));
-    const name = cleanName(url.searchParams.get('name'));
+    const requestedName = cleanName(url.searchParams.get('name'));
+    const account = accountStore.accountForSession(sessionToken(request));
+    const name = account?.username ?? anonymousName(requestedName);
     const devMode = url.searchParams.get('dev') === 'true';
     const levelId = url.searchParams.get('level');
     const playerId = `p${nextPlayerId++}`;
@@ -254,8 +578,28 @@ export function createGameServer(
         managedMatch: true,
       });
     rooms.set(roomId, room);
+    if (
+      account &&
+      [...webSockets.clients].some((candidate) => {
+        const roomSocket = candidate as PlayerSocket;
+        return (
+          roomSocket !== socket &&
+          roomSocket.roomId === roomId &&
+          roomSocket.accountId === account.id
+        );
+      })
+    ) {
+      telemetry.connectionsClosed += 1;
+      socket.close(1008, 'Account is already active in this room');
+      return;
+    }
     try {
-      room.addPlayer(playerId, name);
+      room.addPlayer(
+        playerId,
+        name,
+        Boolean(account),
+        account?.commendations ?? {},
+      );
     } catch {
       telemetry.connectionsClosed += 1;
       socket.close(1008, 'Room is full');
@@ -265,11 +609,22 @@ export function createGameServer(
     socket.roomId = roomId;
     socket.lastInputSequence = -1;
     socket.alive = true;
+    socket.accountId = account?.id;
+    socket.connectionToken = randomBytes(24).toString('base64url');
+    socketsByConnectionToken.set(socket.connectionToken, socket);
     socket.on('pong', () => {
       socket.alive = true;
     });
 
-    socket.send(JSON.stringify({ type: 'welcome', playerId, room: roomId }));
+    socket.send(
+      JSON.stringify({
+        type: 'welcome',
+        playerId,
+        room: roomId,
+        account,
+        connectionToken: socket.connectionToken,
+      }),
+    );
     const initialSnapshot = encodeSnapshot(room);
     for (const rawRoomSocket of webSockets.clients) {
       const roomSocket = rawRoomSocket as PlayerSocket;
@@ -356,6 +711,8 @@ export function createGameServer(
 
     socket.on('close', () => {
       telemetry.connectionsClosed += 1;
+      if (socket.connectionToken)
+        socketsByConnectionToken.delete(socket.connectionToken);
       room.removePlayer(playerId);
       if (room.players.size === 0) rooms.delete(roomId);
     });
@@ -376,7 +733,24 @@ export function createGameServer(
     while (accumulated >= fixedStep) {
       const tickStarted = performance.now();
       const now = Date.now();
-      for (const room of rooms.values()) room.step(now, fixedStep);
+      for (const room of rooms.values()) {
+        room.step(now, fixedStep);
+        for (const award of room.drainCommendationAwards()) {
+          const socket = [...webSockets.clients]
+            .map((candidate) => candidate as PlayerSocket)
+            .find(
+              (candidate) =>
+                candidate.roomId === room.id &&
+                candidate.playerId === award.playerId &&
+                candidate.accountId,
+            );
+          if (!socket?.accountId) continue;
+          const additions = Object.fromEntries(
+            award.commendations.map((id) => [id, 1]),
+          ) as CommendationCounts;
+          accountStore.addCommendations(socket.accountId, additions);
+        }
+      }
       telemetry.tickDurationMs.observe(performance.now() - tickStarted);
       accumulated -= fixedStep;
     }
@@ -426,11 +800,14 @@ export function createGameServer(
     });
   }
 
-  return { httpServer, webSockets, rooms, telemetry, close };
+  return { httpServer, webSockets, rooms, telemetry, accountStore, close };
 }
 
-export async function startGameServer(port = Number(process.env.PORT || 3000)) {
-  const gameServer = createGameServer();
+export async function startGameServer(
+  port = Number(process.env.PORT || 3000),
+  options?: GameServerOptions,
+) {
+  const gameServer = createGameServer(undefined, options);
   const host =
     process.env.GAME_HOST || (process.env.DEV_HOST ? '0.0.0.0' : '127.0.0.1');
   try {

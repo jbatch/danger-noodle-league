@@ -4,7 +4,7 @@
   <property name="name" value="Sprint"/>
  </properties>
  <tileset firstgid="1" name="wallTileSheet" tilewidth="32" tileheight="32" tilecount="16">
-  <image source="../tiles/wallTileSheet.png" width="512" height="32"/>
+  <image source="../tiles/wallTileSheet-classic.png" width="512" height="32"/>
  </tileset>
  <layer name="Walls" width="40" height="21">
   <data>

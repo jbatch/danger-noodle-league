@@ -1,7 +1,13 @@
 'use client';
 // @refresh reset
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type SyntheticEvent,
+} from 'react';
 import {
   ArrowDown,
   ArrowLeft,
@@ -10,18 +16,30 @@ import {
   Check,
   Copy,
   Crown,
+  LogIn,
+  LogOut,
   Music2,
   Radio,
   RotateCcw,
   Settings2,
   Swords,
   Trophy,
+  UserRound,
+  UserRoundCheck,
   Users,
   Volume1,
   VolumeX,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Kbd } from '@/components/ui/kbd';
 import {
@@ -37,10 +55,24 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  audioAssetPath,
+  levelPreviewPath,
+  tileAssetPath,
+  type AssetPalette,
+  type AudioAssetId,
+} from '@/shared/assets';
+import {
+  COMMENDATIONS,
+  COMMENDATION_IDS,
+  type CommendationCounts,
+} from '@/shared/badges';
 import {
   SNAKE_HEAD_RADIUS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
+  type AccountIdentity,
   type GameEvent,
   type GameSnapshot,
   type InputState,
@@ -58,6 +90,12 @@ type ConnectionState =
   | 'connected'
   | 'reconnecting'
   | 'offline';
+
+type AccountMode = 'register' | 'login';
+
+type AccountResponse =
+  | { ok: true; account: AccountIdentity }
+  | { ok: false; code: string; error?: string };
 
 const EMPTY_INPUT: InputState = {
   left: false,
@@ -113,87 +151,87 @@ const POWER_UP_APPEARANCE: Record<
 };
 
 const SFX_LIBRARY = {
-  jump: { source: '/audio/sfx/jump.ogg', volume: 0.5 },
-  land: { source: '/audio/sfx/land.ogg', volume: 0.45 },
-  food: { source: '/audio/sfx/eat-chew.wav', volume: 0.38 },
-  death: { source: '/audio/sfx/explosion.wav', volume: 0.58 },
+  jump: { asset: 'jump', volume: 0.5 },
+  land: { asset: 'land', volume: 0.45 },
+  food: { asset: 'food', volume: 0.38 },
+  death: { asset: 'death', volume: 0.58 },
   'fireball-launch': {
-    source: '/audio/sfx/Fireball_Launch5.wav',
+    asset: 'fireballLaunch',
     volume: 0.5,
   },
   'fireball-impact': {
-    source: '/audio/sfx/Explo_Small_02.wav',
+    asset: 'fireballImpact',
     volume: 0.48,
   },
   'grenade-explosion': {
-    source: '/audio/sfx/grenade_explosion.ogg',
+    asset: 'grenadeExplosion',
     volume: 0.58,
   },
   'rail-gun': {
-    source: '/audio/sfx/EnergyRifle_Impact1.wav',
+    asset: 'railGun',
     volume: 0.52,
   },
   'speed-boost': {
-    source: '/audio/sfx/Pickup_Speed02.wav',
+    asset: 'pickupSpeed',
     volume: 0.42,
   },
   'one-eighty': {
-    source: '/audio/sfx/Magic_Appear01.wav',
+    asset: 'magicAppear',
     volume: 0.42,
   },
   trident: {
-    source: '/audio/sfx/Magic_Respawn03.wav',
+    asset: 'magicRespawn',
     volume: 0.48,
   },
   'pickup-speed-boost': {
-    source: '/audio/sfx/Pickup_Speed02.wav',
+    asset: 'pickupSpeed',
     volume: 0.42,
   },
   'pickup-fireball': {
-    source: '/audio/sfx/Pickup_Fire.wav',
+    asset: 'pickupFire',
     volume: 0.42,
   },
   'pickup-jumper': {
-    source: '/audio/sfx/Pickup_Magic_Speed04.wav',
+    asset: 'pickupMagicSpeed',
     volume: 0.42,
   },
   'pickup-grenade': {
-    source: '/audio/sfx/Gun_Ammo_Pickup04.wav',
+    asset: 'ammoPickup',
     volume: 0.42,
   },
   'pickup-one-eighty': {
-    source: '/audio/sfx/Magic_Appear01.wav',
+    asset: 'magicAppear',
     volume: 0.42,
   },
   'pickup-rail-gun': {
-    source: '/audio/sfx/Pickup_Scifi_Energy01.wav',
+    asset: 'pickupScifi',
     volume: 0.42,
   },
   'pickup-trident': {
-    source: '/audio/sfx/Pickup_MiscSwish01.wav',
+    asset: 'pickupSwish',
     volume: 0.42,
   },
   'pickup-ghost': {
-    source: '/audio/sfx/Magic_Disappear.wav',
+    asset: 'magicDisappear',
     volume: 0.42,
   },
   'pickup-tron-mode': {
-    source: '/audio/sfx/Pickup_Magic_Speed04.wav',
+    asset: 'pickupMagicSpeed',
     volume: 0.42,
   },
   'pickup-shield': {
-    source: '/audio/sfx/Pickup_Scifi_Energy01.wav',
+    asset: 'pickupScifi',
     volume: 0.42,
   },
   'pickup-napalm': {
-    source: '/audio/sfx/Pickup_Fire.wav',
+    asset: 'pickupFire',
     volume: 0.42,
   },
   'pickup-disco-ball': {
-    source: '/audio/sfx/Magic_Appear01.wav',
+    asset: 'magicAppear',
     volume: 0.42,
   },
-} as const;
+} as const satisfies Record<string, { asset: AudioAssetId; volume: number }>;
 
 type SfxKey = keyof typeof SFX_LIBRARY;
 type SfxPool = Map<SfxKey, { cursor: number; voices: HTMLAudioElement[] }>;
@@ -271,24 +309,25 @@ function drawLevel(
   context: CanvasRenderingContext2D,
   level: CompiledLevel,
   destroyedWalls: readonly number[],
+  palette: AssetPalette,
 ) {
   drawTiles(
     context,
     level.terrain,
-    '/levels/tiles/terrainSheet.png',
+    tileAssetPath('terrain', palette),
     'rgba(91, 144, 180, .45)',
   );
   drawTiles(
     context,
     level.walls,
-    '/levels/tiles/wallTileSheet.png',
+    tileAssetPath('walls', palette),
     '#4d5666',
     new Set(destroyedWalls),
   );
   drawTiles(
     context,
     level.overlays,
-    '/levels/tiles/overlaySheet.png',
+    tileAssetPath('overlays', palette),
     'rgba(255, 255, 255, .08)',
   );
 }
@@ -298,6 +337,7 @@ function drawArena(
   snapshot: GameSnapshot | null,
   playerId: string | null,
   clock: number,
+  palette: AssetPalette,
 ) {
   const bounds = canvas.getBoundingClientRect();
   const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -357,7 +397,12 @@ function drawArena(
     return;
   }
 
-  drawLevel(context, getLevel(snapshot.levelId), snapshot.destroyedWalls);
+  drawLevel(
+    context,
+    getLevel(snapshot.levelId),
+    snapshot.destroyedWalls,
+    palette,
+  );
 
   for (const food of snapshot.food) {
     const pulse = 1 + Math.sin(clock * 0.004 + food.id) * 0.12;
@@ -735,6 +780,72 @@ function sliderValue(value: number | readonly number[]) {
   return typeof value === 'number' ? value : (value[0] ?? 0);
 }
 
+function earnedCommendations(counts: CommendationCounts = {}) {
+  return COMMENDATION_IDS.filter((id) => (counts[id] ?? 0) > 0).sort(
+    (a, b) => (counts[b] ?? 0) - (counts[a] ?? 0),
+  );
+}
+
+function CommendationRow({ counts = {} }: { counts?: CommendationCounts }) {
+  const earned = earnedCommendations(counts);
+  if (earned.length === 0) return null;
+  const visible = earned.slice(0, 3);
+  const hidden = earned.slice(visible.length);
+  return (
+    <div className="commendation-row" aria-label="Commendation totals">
+      {visible.map((commendationId) => {
+        const commendation = COMMENDATIONS[commendationId];
+        return (
+          <abbr
+            key={commendationId}
+            className="commendation-chip"
+            title={`${commendation.label} — ${commendation.description}`}
+          >
+            <b>{commendation.mark}</b>
+            <small>{commendation.shortLabel}</small>
+            <em>×{counts[commendationId]}</em>
+          </abbr>
+        );
+      })}
+      {hidden.length > 0 && (
+        <abbr
+          className="commendation-chip commendation-overflow"
+          title={hidden
+            .map((id) => `${COMMENDATIONS[id].label} ×${counts[id]}`)
+            .join(', ')}
+        >
+          +{hidden.length}
+        </abbr>
+      )}
+    </div>
+  );
+}
+
+function RoundCommendations({ snapshot }: { snapshot: GameSnapshot }) {
+  if (snapshot.roundCommendations.length === 0) return null;
+  return (
+    <div className="round-commendations" aria-label="Round commendations">
+      {snapshot.roundCommendations.map((award) => {
+        const player = snapshot.players.find(
+          (candidate) => candidate.id === award.playerId,
+        );
+        return (
+          <div key={award.playerId}>
+            <strong>{player?.name ?? 'Departed noodle'}</strong>
+            <span>
+              {award.commendations.map((id) => (
+                <abbr key={id} title={COMMENDATIONS[id].description}>
+                  <b>{COMMENDATIONS[id].mark}</b> {COMMENDATIONS[id].label}
+                </abbr>
+              ))}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function DangerNoodleGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -745,6 +856,8 @@ export function DangerNoodleGame() {
   const lastEventIdRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const snapshotRef = useRef<GameSnapshot | null>(null);
+  const playerIdRef = useRef<string | null>(null);
+  const connectionTokenRef = useRef<string | null>(null);
   const inputRef = useRef<InputState>({ ...EMPTY_INPUT });
   const reconnectRef = useRef<number | null>(null);
   const reconnectFunctionRef = useRef<(room: string, name: string) => void>(
@@ -773,10 +886,19 @@ export function DangerNoodleGame() {
   const [sfxEnabled, setSfxEnabled] = useState(true);
   const [musicVolume, setMusicVolume] = useState(0.38);
   const [sfxVolume, setSfxVolume] = useState(1);
+  const [assetPalette, setAssetPalette] = useState<AssetPalette>('classic');
+  const [account, setAccount] = useState<AccountIdentity | null>(null);
+  const [accountDialogOpen, setAccountDialogOpen] = useState(false);
+  const [accountMode, setAccountMode] = useState<AccountMode>('register');
+  const [accountUsername, setAccountUsername] = useState('');
+  const [accountPassword, setAccountPassword] = useState('');
+  const [accountPasswordConfirm, setAccountPasswordConfirm] = useState('');
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    const audio = new Audio('/audio/music/snakes-theme.ogg');
+    const audio = new Audio(audioAssetPath('theme', assetPalette));
     audioRef.current = audio;
     audio.preload = 'auto';
     const storedVolume = Number(localStorage.getItem('dnl-music-volume'));
@@ -800,7 +922,7 @@ export function DangerNoodleGame() {
       audio.pause();
       audioRef.current = null;
     };
-  }, []);
+  }, [assetPalette]);
 
   const unlockSfx = useCallback(() => {
     if (sfxUnlockedRef.current) return;
@@ -824,6 +946,25 @@ export function DangerNoodleGame() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    void fetch('/api/account/session', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json()) as AccountResponse;
+      })
+      .then((result) => {
+        if (!active || !result?.ok) return;
+        setAccount(result.account);
+        setName(result.account.username);
+        localStorage.setItem('dnl-name', result.account.username);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const pool: SfxPool = new Map();
     const storedVolume = Number(localStorage.getItem('dnl-sfx-volume'));
     const initialVolume = Number.isFinite(storedVolume)
@@ -835,7 +976,7 @@ export function DangerNoodleGame() {
       (typeof SFX_LIBRARY)[SfxKey],
     ][]) {
       const voices = Array.from({ length: 4 }, () => {
-        const voice = new Audio(config.source);
+        const voice = new Audio(audioAssetPath(config.asset, assetPalette));
         voice.preload = 'auto';
         voice.volume = config.volume * initialVolume;
         return voice;
@@ -864,7 +1005,7 @@ export function DangerNoodleGame() {
       stopSfx(pool);
       sfxPoolRef.current = new Map();
     };
-  }, [unlockSfx]);
+  }, [assetPalette, unlockSfx]);
 
   const playGameEvents = useCallback((events: GameEvent[]) => {
     const latestEventId = events.at(-1)?.id ?? 0;
@@ -891,6 +1032,9 @@ export function DangerNoodleGame() {
       const params = new URLSearchParams(window.location.search);
       setRoom((params.get('room') || makeRoomCode()).toUpperCase());
       setSelectedLevel(getLevel(params.get('level')).id);
+      const storedPalette = localStorage.getItem('dnl-asset-palette');
+      if (storedPalette === 'classic' || storedPalette === 'handmade')
+        setAssetPalette(storedPalette);
       setName(
         localStorage.getItem('dnl-name') ||
           `Noodle ${Math.floor(10 + Math.random() * 90)}`,
@@ -932,6 +1076,8 @@ export function DangerNoodleGame() {
       }
       disconnect();
       lastEventIdRef.current = null;
+      playerIdRef.current = null;
+      connectionTokenRef.current = null;
       networkStatsRef.current = {
         lastArrival: null,
         lastSequence: null,
@@ -969,7 +1115,16 @@ export function DangerNoodleGame() {
       });
       socket.addEventListener('message', (event) => {
         const message = JSON.parse(event.data) as ServerMessage;
-        if (message.type === 'welcome') setPlayerId(message.playerId);
+        if (message.type === 'welcome') {
+          playerIdRef.current = message.playerId;
+          connectionTokenRef.current = message.connectionToken ?? null;
+          setPlayerId(message.playerId);
+          if (message.account) {
+            setAccount(message.account);
+            setName(message.account.username);
+            localStorage.setItem('dnl-name', message.account.username);
+          }
+        }
         if (message.type === 'snapshot') {
           const arrival = performance.now();
           const decoded = unpackSnapshot(message);
@@ -1137,12 +1292,18 @@ export function DangerNoodleGame() {
     let animation = 0;
     const frame = (clock: number) => {
       if (canvasRef.current)
-        drawArena(canvasRef.current, snapshotRef.current, playerId, clock);
+        drawArena(
+          canvasRef.current,
+          snapshotRef.current,
+          playerId,
+          clock,
+          assetPalette,
+        );
       animation = requestAnimationFrame(frame);
     };
     animation = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(animation);
-  }, [playerId]);
+  }, [assetPalette, playerId]);
 
   const copyInvite = async () => {
     await navigator.clipboard.writeText(window.location.href);
@@ -1197,6 +1358,91 @@ export function DangerNoodleGame() {
     sfxVolumeRef.current = next;
     localStorage.setItem('dnl-sfx-volume', String(next));
     setSfxVolume(next);
+  };
+
+  const changeAssetPalette = (value: string | null) => {
+    if (value !== 'classic' && value !== 'handmade') return;
+    localStorage.setItem('dnl-asset-palette', value);
+    setAssetPalette(value);
+  };
+
+  const openAccountDialog = () => {
+    setAccountMode('register');
+    setAccountUsername(account?.username ?? name);
+    setAccountPassword('');
+    setAccountPasswordConfirm('');
+    setAccountError(null);
+    setAccountDialogOpen(true);
+  };
+
+  const submitAccount = async (event: SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (
+      accountMode === 'register' &&
+      accountPassword !== accountPasswordConfirm
+    ) {
+      setAccountError('Passwords do not match.');
+      return;
+    }
+    setAccountBusy(true);
+    setAccountError(null);
+    try {
+      const response = await fetch(`/api/account/${accountMode}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          username: accountUsername,
+          password: accountPassword,
+          connectionToken: connectionTokenRef.current,
+        }),
+      });
+      const result = (await response.json()) as AccountResponse;
+      if (!response.ok || !result.ok) {
+        setAccountError(
+          result.ok
+            ? 'The account service could not complete that request.'
+            : result.error ||
+                'The account service could not complete that request.',
+        );
+        return;
+      }
+      setAccount(result.account);
+      setName(result.account.username);
+      localStorage.setItem('dnl-name', result.account.username);
+      setAccountPassword('');
+      setAccountPasswordConfirm('');
+      setAccountDialogOpen(false);
+    } catch {
+      setAccountError('Could not reach the account service. Try again.');
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const logoutAccount = async () => {
+    setAccountBusy(true);
+    setAccountError(null);
+    try {
+      const response = await fetch('/api/account/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          connectionToken: connectionTokenRef.current,
+        }),
+      });
+      if (!response.ok) throw new Error('logout failed');
+      const guestName = `${(account?.username ?? name).slice(0, 10)} Guest`;
+      setAccount(null);
+      setName(guestName);
+      localStorage.setItem('dnl-name', guestName);
+      setAccountDialogOpen(false);
+    } catch {
+      setAccountError('Could not log out. Try again.');
+    } finally {
+      setAccountBusy(false);
+    }
   };
 
   const sendControl = (message: object) => {
@@ -1276,8 +1522,8 @@ export function DangerNoodleGame() {
           <Popover>
             <PopoverTrigger
               className="audio-settings-trigger"
-              aria-label="Audio volume settings"
-              title="Audio volume settings"
+              aria-label="Audio and visual settings"
+              title="Audio and visual settings"
             >
               <Settings2 />
             </PopoverTrigger>
@@ -1308,8 +1554,32 @@ export function DangerNoodleGame() {
                   changeSfxVolume(sliderValue(value) / 100)
                 }
               />
+              <div className="asset-palette-heading">
+                <label htmlFor="asset-palette">Art &amp; sound</label>
+                <output>{assetPalette}</output>
+              </div>
+              <Select value={assetPalette} onValueChange={changeAssetPalette}>
+                <SelectTrigger id="asset-palette">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="classic">Classic</SelectItem>
+                  <SelectItem value="handmade">Handmade</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="asset-palette-note">
+                Missing handmade files fall back to Classic.
+              </p>
             </PopoverContent>
           </Popover>
+          <Button
+            variant="outline"
+            className={`account-button ${account ? 'is-saved' : ''}`}
+            onClick={openAccountDialog}
+          >
+            {account ? <UserRoundCheck /> : <UserRound />}
+            <span>{account ? account.username : 'SAVE NOODLE'}</span>
+          </Button>
           <Badge variant="outline" className={`status-pill status-${status}`}>
             <Radio data-icon="inline-start" />{' '}
             {status === 'connected' ? 'LIVE' : status.toUpperCase()}
@@ -1335,6 +1605,151 @@ export function DangerNoodleGame() {
           )}
         </div>
       </header>
+
+      <Dialog open={accountDialogOpen} onOpenChange={setAccountDialogOpen}>
+        <DialogContent className="account-dialog">
+          <DialogHeader>
+            <DialogTitle>
+              {account ? 'Saved noodle' : 'Save your noodle'}
+            </DialogTitle>
+            <DialogDescription>
+              {account
+                ? 'This username is protected and will be restored when you sign in again.'
+                : 'Accounts are optional. Anonymous quickplay and Survival still work exactly as before.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {account ? (
+            <div>
+              <div className="account-summary">
+                <UserRoundCheck />
+                <div>
+                  <small>SIGNED IN AS</small>
+                  <strong>{account.username}</strong>
+                  <span>
+                    Saved since{' '}
+                    {new Date(account.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+              </div>
+              <div className="commendation-cabinet">
+                <small>LIFETIME COMMENDATIONS</small>
+                <div>
+                  {COMMENDATION_IDS.map((id) => (
+                    <abbr key={id} title={COMMENDATIONS[id].description}>
+                      <b>{COMMENDATIONS[id].mark}</b>
+                      <span>{COMMENDATIONS[id].label}</span>
+                      <em>
+                        ×
+                        {localRoomPlayer?.commendations[id] ??
+                          account.commendations[id] ??
+                          0}
+                      </em>
+                    </abbr>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <form className="account-form" onSubmit={submitAccount}>
+              <Tabs
+                value={accountMode}
+                onValueChange={(value) => {
+                  if (value !== 'register' && value !== 'login') return;
+                  setAccountMode(value);
+                  setAccountPassword('');
+                  setAccountPasswordConfirm('');
+                  setAccountError(null);
+                }}
+              >
+                <TabsList className="account-tabs">
+                  <TabsTrigger value="register">Create account</TabsTrigger>
+                  <TabsTrigger value="login">Log in</TabsTrigger>
+                </TabsList>
+                <TabsContent value="register" className="account-tab-copy">
+                  Convert this noodle into a saved account without leaving the
+                  room. Current score and commendation totals stay in place.
+                </TabsContent>
+                <TabsContent value="login" className="account-tab-copy">
+                  Restore a saved username. If you are already playing, your
+                  current noodle changes over without leaving the room.
+                </TabsContent>
+              </Tabs>
+
+              <label htmlFor="account-username">Username</label>
+              <Input
+                id="account-username"
+                value={accountUsername}
+                minLength={3}
+                maxLength={16}
+                pattern="[A-Za-z0-9 _-]{3,16}"
+                autoComplete="username"
+                required
+                onChange={(event) => setAccountUsername(event.target.value)}
+              />
+              <label htmlFor="account-password">Password</label>
+              <Input
+                id="account-password"
+                type="password"
+                value={accountPassword}
+                minLength={8}
+                maxLength={128}
+                autoComplete={
+                  accountMode === 'register'
+                    ? 'new-password'
+                    : 'current-password'
+                }
+                required
+                onChange={(event) => setAccountPassword(event.target.value)}
+              />
+              <small className="account-password-hint">
+                8 characters minimum. Passwords are stored as salted hashes.
+              </small>
+              {accountMode === 'register' && (
+                <>
+                  <label htmlFor="account-password-confirm">
+                    Confirm password
+                  </label>
+                  <Input
+                    id="account-password-confirm"
+                    type="password"
+                    value={accountPasswordConfirm}
+                    minLength={8}
+                    maxLength={128}
+                    autoComplete="new-password"
+                    required
+                    onChange={(event) =>
+                      setAccountPasswordConfirm(event.target.value)
+                    }
+                  />
+                </>
+              )}
+              {accountError && <p className="account-error">{accountError}</p>}
+              <Button type="submit" disabled={accountBusy}>
+                {accountMode === 'register' ? <UserRoundCheck /> : <LogIn />}
+                {accountBusy
+                  ? 'WORKING…'
+                  : accountMode === 'register'
+                    ? 'SAVE NOODLE'
+                    : 'LOG IN'}
+              </Button>
+            </form>
+          )}
+
+          {account && (
+            <DialogFooter className="account-footer">
+              {accountError && <p className="account-error">{accountError}</p>}
+              <Button
+                variant="outline"
+                disabled={accountBusy}
+                onClick={logoutAccount}
+              >
+                <LogOut /> {accountBusy ? 'WORKING…' : 'LOG OUT'}
+              </Button>
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <section className="arena-frame" aria-label="Danger Noodle game arena">
         <canvas ref={canvasRef} className="game-canvas" />
@@ -1362,6 +1777,7 @@ export function DangerNoodleGame() {
                 id="player-name"
                 value={name}
                 maxLength={16}
+                readOnly={Boolean(account)}
                 onChange={(event) => setName(event.target.value)}
                 autoComplete="nickname"
               />
@@ -1395,7 +1811,7 @@ export function DangerNoodleGame() {
                   className="level-preview"
                   aria-hidden="true"
                   style={{
-                    backgroundImage: `url(${getLevel(selectedLevel).previewSmall})`,
+                    backgroundImage: `url(${levelPreviewPath(selectedLevel, 'small', assetPalette)})`,
                   }}
                 />
                 <Select
@@ -1470,7 +1886,17 @@ export function DangerNoodleGame() {
                         className="roster-color"
                         style={{ background: `hsl(${player.color} 90% 65%)` }}
                       />
-                      <strong>{player.name}</strong>
+                      <div className="roster-identity">
+                        <div className="roster-name-line">
+                          <strong>{player.name}</strong>
+                          {player.saved && (
+                            <small className="saved-player-chip">
+                              <UserRoundCheck /> SAVED
+                            </small>
+                          )}
+                        </div>
+                        <CommendationRow counts={player.commendations} />
+                      </div>
                       {player.id === snapshot.hostId && (
                         <small className="host-chip">
                           <Crown /> HOST
@@ -1517,7 +1943,7 @@ export function DangerNoodleGame() {
                     className="level-preview"
                     aria-hidden="true"
                     style={{
-                      backgroundImage: `url(${getLevel(snapshot.levelId).previewSmall})`,
+                      backgroundImage: `url(${levelPreviewPath(snapshot.levelId, 'small', assetPalette)})`,
                     }}
                   />
                   <Select
@@ -1627,7 +2053,33 @@ export function DangerNoodleGame() {
                     <span
                       style={{ backgroundColor: `hsl(${snake.color} 90% 65%)` }}
                     />
-                    <strong>{snake.name}</strong>
+                    <div className="score-player">
+                      <strong>{snake.name}</strong>
+                      {(() => {
+                        const commendations =
+                          snapshot.players.find(
+                            (player) => player.id === snake.ownerId,
+                          )?.commendations ?? {};
+                        const total = Object.values(commendations).reduce(
+                          (sum, count) => sum + (count ?? 0),
+                          0,
+                        );
+                        if (total === 0) return null;
+                        return (
+                          <small
+                            className="score-commendations"
+                            title={earnedCommendations(commendations)
+                              .map(
+                                (id) =>
+                                  `${COMMENDATIONS[id].label} ×${commendations[id]}`,
+                              )
+                              .join(', ')}
+                          >
+                            ★{total}
+                          </small>
+                        );
+                      })()}
+                    </div>
                     <small className="player-ping">
                       {snake.pingMs === null ? '—' : snake.pingMs}ms
                     </small>
@@ -1670,6 +2122,7 @@ export function DangerNoodleGame() {
             <Trophy />
             <small>ROUND {snapshot.roundNumber}</small>
             <strong>{roundWinner ? `${roundWinner.name} WINS` : 'DRAW'}</strong>
+            <RoundCommendations snapshot={snapshot} />
             <span>Next round in {phaseSeconds}</span>
           </div>
         )}
@@ -1679,8 +2132,9 @@ export function DangerNoodleGame() {
             <Trophy />
             <small>MATCH COMPLETE</small>
             <strong>{matchWinner?.name ?? 'NOODLE'} TAKES THE LEAGUE</strong>
+            <RoundCommendations snapshot={snapshot} />
             {isHost ? (
-              <div>
+              <div className="match-actions">
                 <Button onClick={() => sendControl({ type: 'rematch' })}>
                   REMATCH
                 </Button>

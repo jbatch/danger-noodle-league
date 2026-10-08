@@ -4,3 +4,8 @@ services:
     restart: unless-stopped
     ports:
       - '127.0.0.1:${DNL_PORT:-3000}:3000'
+    volumes:
+      - danger-noodle-data:/app/data
+
+volumes:
+  danger-noodle-data:
