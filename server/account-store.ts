@@ -18,8 +18,12 @@ import {
   normalizeCommendationCounts,
   type CommendationCounts,
 } from '../shared/badges.ts';
+import {
+  normalizeAchievementIds,
+  type AchievementId,
+} from '../shared/achievements.ts';
 
-const ACCOUNT_FILE_VERSION = 2;
+const ACCOUNT_FILE_VERSION = 3;
 const PASSWORD_KEY_LENGTH = 64;
 const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_SESSIONS_PER_ACCOUNT = 5;
@@ -30,6 +34,7 @@ export type AccountProfile = {
   username: string;
   createdAt: string;
   commendations: CommendationCounts;
+  achievements: AchievementId[];
 };
 
 type AccountSession = {
@@ -123,6 +128,7 @@ function publicProfile(account: StoredAccount): AccountProfile {
     username: account.username,
     createdAt: account.createdAt,
     commendations: { ...account.commendations },
+    achievements: [...account.achievements],
   };
 }
 
@@ -138,7 +144,7 @@ export class AccountStore {
     if (!existsSync(filePath)) return;
     const stored = JSON.parse(readFileSync(filePath, 'utf8')) as AccountFile;
     if (
-      ![1, ACCOUNT_FILE_VERSION].includes(stored.version) ||
+      ![1, 2, ACCOUNT_FILE_VERSION].includes(stored.version) ||
       !Array.isArray(stored.accounts)
     )
       throw new Error(`Unsupported account store at ${filePath}`);
@@ -155,6 +161,7 @@ export class AccountStore {
       account.commendations = normalizeCommendationCounts(
         account.commendations,
       );
+      account.achievements = normalizeAchievementIds(account.achievements);
       this.accounts.set(account.normalizedUsername, account);
     }
   }
@@ -191,6 +198,7 @@ export class AccountStore {
       passwordHash,
       createdAt: new Date().toISOString(),
       commendations: {},
+      achievements: [],
       sessions: [],
     };
     const token = this.addSession(account);
@@ -266,6 +274,22 @@ export class AccountStore {
         (account.commendations[id as keyof CommendationCounts] ?? 0) +
         (count ?? 0);
     if (Object.keys(cleanAdditions).length > 0) this.persist();
+    return publicProfile(account);
+  }
+
+  unlockAchievements(accountId: string, achievementIds: AchievementId[]) {
+    const account = [...this.accounts.values()].find(
+      (candidate) => candidate.id === accountId,
+    );
+    if (!account) return null;
+    const existing = new Set(account.achievements);
+    const additions = normalizeAchievementIds(achievementIds).filter(
+      (id) => !existing.has(id),
+    );
+    if (additions.length > 0) {
+      account.achievements.push(...additions);
+      this.persist();
+    }
     return publicProfile(account);
   }
 

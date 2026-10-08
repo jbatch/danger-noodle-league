@@ -90,3 +90,23 @@ void test('commendation counts accumulate and survive a reload', async () => {
     3,
   );
 });
+
+void test('achievements unlock once and survive a reload', async () => {
+  const { filePath, store } = temporaryStore();
+  const registered = await store.register('Trophy Noodle', 'long-enough');
+  const first = store.unlockAchievements(registered.account.id, [
+    'first-win',
+    'clean-sweep',
+  ]);
+  assert.deepEqual(first?.achievements, ['first-win', 'clean-sweep']);
+  const repeated = store.unlockAchievements(registered.account.id, [
+    'first-win',
+  ]);
+  assert.deepEqual(repeated?.achievements, ['first-win', 'clean-sweep']);
+
+  const reloaded = new AccountStore(filePath);
+  assert.deepEqual(reloaded.accountForSession(registered.token)?.achievements, [
+    'first-win',
+    'clean-sweep',
+  ]);
+});

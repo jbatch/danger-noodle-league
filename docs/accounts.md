@@ -47,7 +47,8 @@ Deleting it permanently removes saved accounts.
 
 ## Scope boundary
 
-Accounts persist identity and lifetime Survival commendation counts. Anonymous
-totals are merged into an account during in-room registration or login. The
-account session token remains intentionally separate from the future short
-disconnect/reconnect token that will reclaim a live room owner.
+Accounts persist identity, lifetime Survival commendation counts, and one-off
+achievement IDs. Anonymous totals and pending achievement unlocks are merged
+into an account during in-room registration or login. The account session token
+remains intentionally separate from the future short disconnect/reconnect token
+that will reclaim a live room owner.

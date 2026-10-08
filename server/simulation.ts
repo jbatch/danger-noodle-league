@@ -18,12 +18,17 @@ import {
   type PowerUpType,
   type RailSnapshot,
   type RoomPlayerSnapshot,
+  type RoundAchievementUnlock,
   type RoundCommendationAward,
   type SnakeSnapshot,
   type TrailPoint,
   type TurretShotSnapshot,
   type TurretSnapshot,
 } from '../shared/protocol.ts';
+import {
+  normalizeAchievementIds,
+  type AchievementId,
+} from '../shared/achievements.ts';
 import {
   type CommendationCounts,
   type CommendationId,
@@ -165,12 +170,15 @@ type RoundStats = {
   headsLost: number;
   peakTail: number;
   eliminatedAt: number | null;
+  activatedCorePowerUps: Set<PowerUpType>;
 };
 
-type RoomPlayer = RoomPlayerSnapshot & {
+type RoomPlayer = Omit<RoomPlayerSnapshot, 'achievements'> & {
+  achievements: Set<AchievementId>;
   spawnIndex: number;
   roundStats: RoundStats;
   pendingCommendations: CommendationCounts;
+  pendingAchievements: Set<AchievementId>;
 };
 
 export type GameRoomOptions = {
@@ -260,10 +268,15 @@ export class GameRoom {
   matchWinnerId: string | null = null;
   discoUntil: number | null = null;
   private roundOwners = new Set<string>();
+  private roundStartingPlayerCount = 0;
   private nextCommendationEventId = 1;
   private pendingCommendationAwards: RoundCommendationAward[] = [];
   commendationEventId = 0;
   roundCommendations: RoundCommendationAward[] = [];
+  private nextAchievementEventId = 1;
+  private pendingAchievementUnlocks: RoundAchievementUnlock[] = [];
+  achievementEventId = 0;
+  roundAchievements: RoundAchievementUnlock[] = [];
 
   constructor(
     id: string,
@@ -293,6 +306,7 @@ export class GameRoom {
     name: string,
     saved = false,
     commendations: CommendationCounts = {},
+    achievements: AchievementId[] = [],
   ): Snake {
     if (this.players.size >= 8) throw new Error('room is full');
     const color = Math.floor(this.random() * 360);
@@ -313,11 +327,15 @@ export class GameRoom {
         this.managedMatch && this.mode === 'survival' && this.phase !== 'lobby',
       saved,
       commendations: normalizeCommendationCounts(commendations),
+      achievements: new Set(normalizeAchievementIds(achievements)),
       spawnIndex,
       roundStats: this.emptyRoundStats(),
       pendingCommendations: saved
         ? {}
         : normalizeCommendationCounts(commendations),
+      pendingAchievements: new Set(
+        saved ? [] : normalizeAchievementIds(achievements),
+      ),
     };
     this.players.set(id, player);
     if (!this.hostId) this.hostId = id;
@@ -371,6 +389,30 @@ export class GameRoom {
 
   drainCommendationAwards() {
     return this.pendingCommendationAwards.splice(0);
+  }
+
+  playerAchievements(ownerId: string) {
+    return normalizeAchievementIds([
+      ...(this.players.get(ownerId)?.achievements ?? []),
+    ]);
+  }
+
+  pendingPlayerAchievements(ownerId: string) {
+    return normalizeAchievementIds([
+      ...(this.players.get(ownerId)?.pendingAchievements ?? []),
+    ]);
+  }
+
+  setPlayerAchievements(ownerId: string, achievements: AchievementId[]) {
+    const player = this.players.get(ownerId);
+    if (!player) return false;
+    player.achievements = new Set(normalizeAchievementIds(achievements));
+    player.pendingAchievements.clear();
+    return true;
+  }
+
+  drainAchievementUnlocks() {
+    return this.pendingAchievementUnlocks.splice(0);
   }
 
   removePlayer(ownerId: string) {
@@ -468,7 +510,9 @@ export class GameRoom {
     this.phase = 'countdown';
     this.phaseEndsAt = now + COUNTDOWN_MS;
     this.roundOwners = new Set(this.players.keys());
+    this.roundStartingPlayerCount = this.roundOwners.size;
     this.roundCommendations = [];
+    this.roundAchievements = [];
     for (const player of this.players.values()) {
       player.spectator = false;
       player.roundStats = this.emptyRoundStats();
@@ -486,7 +530,9 @@ export class GameRoom {
       winner.wins += 1;
     }
     this.awardRoundCommendations(winnerId);
-    if (winner && winner.wins >= this.winsToMatch) {
+    const matchWon = Boolean(winner && winner.wins >= this.winsToMatch);
+    this.awardRoundAchievements(winnerId, matchWon);
+    if (winner && matchWon) {
       this.matchWinnerId = winner.id;
       this.phase = 'match-over';
       this.phaseEndsAt = null;
@@ -794,6 +840,7 @@ export class GameRoom {
         spectator: player.spectator,
         saved: player.saved,
         commendations: { ...player.commendations },
+        achievements: [...player.achievements],
       })),
       winsToMatch: this.winsToMatch,
       roundNumber: this.roundNumber,
@@ -804,6 +851,11 @@ export class GameRoom {
       roundCommendations: this.roundCommendations.map((award) => ({
         playerId: award.playerId,
         commendations: [...award.commendations],
+      })),
+      achievementEventId: this.achievementEventId,
+      roundAchievements: this.roundAchievements.map((unlock) => ({
+        playerId: unlock.playerId,
+        achievements: [...unlock.achievements],
       })),
       discoUntil: this.discoUntil,
       food: this.food.map((item) => ({ ...item })),
@@ -890,6 +942,7 @@ export class GameRoom {
       headsLost: 0,
       peakTail: 0,
       eliminatedAt: null,
+      activatedCorePowerUps: new Set(),
     };
   }
 
@@ -980,6 +1033,50 @@ export class GameRoom {
     this.pendingCommendationAwards.push(...this.roundCommendations);
   }
 
+  private awardRoundAchievements(winnerId: string | null, matchWon: boolean) {
+    const unlocks = new Map<string, AchievementId[]>();
+    const participants = [...this.roundOwners]
+      .map((ownerId) => this.players.get(ownerId))
+      .filter((player): player is RoomPlayer => Boolean(player));
+    const unlock = (player: RoomPlayer, achievement: AchievementId) => {
+      if (player.achievements.has(achievement)) return;
+      player.achievements.add(achievement);
+      if (!player.saved) player.pendingAchievements.add(achievement);
+      const playerUnlocks = unlocks.get(player.id) ?? [];
+      playerUnlocks.push(achievement);
+      unlocks.set(player.id, playerUnlocks);
+    };
+
+    const winner = winnerId ? this.players.get(winnerId) : null;
+    if (winner) {
+      unlock(winner, 'first-win');
+      if (matchWon) unlock(winner, 'league-champion');
+      if (this.roundStartingPlayerCount === 8) unlock(winner, 'full-house');
+      if (
+        winner.roundStats.damageTaken === 0 &&
+        winner.roundStats.headsLost === 0
+      )
+        unlock(winner, 'clean-sweep');
+    }
+    for (const player of participants) {
+      if (player.roundStats.peakTail >= MAX_TRAIL_LENGTH)
+        unlock(player, 'fully-grown');
+      if (player.roundStats.eggs >= 12) unlock(player, 'egg-carton');
+      if (player.roundStats.activatedCorePowerUps.size >= POWER_UP_TYPES.length)
+        unlock(player, 'power-tour');
+      if (player.roundStats.jumps >= 20) unlock(player, 'air-time');
+      if (player.roundStats.headsLost >= 3) unlock(player, 'hard-headed');
+    }
+
+    if (unlocks.size === 0) return;
+    this.achievementEventId = this.nextAchievementEventId++;
+    this.roundAchievements = [...unlocks].map(([playerId, achievements]) => ({
+      playerId,
+      achievements,
+    }));
+    this.pendingAchievementUnlocks.push(...this.roundAchievements);
+  }
+
   private emitEvent(type: GameEventType, point: Point, powerUp?: PowerUpType) {
     this.events.push({
       id: this.nextEventId++,
@@ -1050,7 +1147,11 @@ export class GameRoom {
     snake.powerUp = null;
     if (!powerUp) return;
     const player = this.players.get(snake.ownerId);
-    if (player && this.phase === 'playing') player.roundStats.powerUps += 1;
+    if (player && this.phase === 'playing') {
+      player.roundStats.powerUps += 1;
+      if (POWER_UP_TYPES.includes(powerUp))
+        player.roundStats.activatedCorePowerUps.add(powerUp);
+    }
     switch (powerUp) {
       case 'speed-boost':
         snake.speedBoost += SPEED_BOOST_AMOUNT;

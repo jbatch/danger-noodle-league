@@ -210,6 +210,7 @@ export function createGameServer(
     if (!room?.renamePlayer(socket.playerId, account.username, true))
       return 'That game connection is no longer active.';
     room.setPlayerCommendations(socket.playerId, account.commendations);
+    room.setPlayerAchievements(socket.playerId, account.achievements);
     socket.accountId = account.id;
     broadcastRoom(socket.roomId);
     return null;
@@ -345,6 +346,16 @@ export function createGameServer(
           const updated = accountStore.addCommendations(
             result.account.id,
             sessionCommendations,
+          );
+          if (updated) result.account = updated;
+        }
+        const sessionAchievements = socket.playerId
+          ? room?.pendingPlayerAchievements(socket.playerId)
+          : null;
+        if (sessionAchievements) {
+          const updated = accountStore.unlockAchievements(
+            result.account.id,
+            sessionAchievements,
           );
           if (updated) result.account = updated;
         }
@@ -599,6 +610,7 @@ export function createGameServer(
         name,
         Boolean(account),
         account?.commendations ?? {},
+        account?.achievements ?? [],
       );
     } catch {
       telemetry.connectionsClosed += 1;
@@ -749,6 +761,21 @@ export function createGameServer(
             award.commendations.map((id) => [id, 1]),
           ) as CommendationCounts;
           accountStore.addCommendations(socket.accountId, additions);
+        }
+        for (const unlock of room.drainAchievementUnlocks()) {
+          const socket = [...webSockets.clients]
+            .map((candidate) => candidate as PlayerSocket)
+            .find(
+              (candidate) =>
+                candidate.roomId === room.id &&
+                candidate.playerId === unlock.playerId &&
+                candidate.accountId,
+            );
+          if (!socket?.accountId) continue;
+          accountStore.unlockAchievements(
+            socket.accountId,
+            unlock.achievements,
+          );
         }
       }
       telemetry.tickDurationMs.observe(performance.now() - tickStarted);

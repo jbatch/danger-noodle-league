@@ -27,6 +27,7 @@ The reverse-engineered replication target—including original movement, jumping
   spectators, and host migration
 - Quickplay mode preserving the original fast automatic-respawn loop
 - Repeatable server-authoritative Survival commendations with round results and account totals
+- Permanent one-off account achievements with server-authoritative unlock rules
 - Optional saved usernames with backend password hashing and durable sign-in sessions
 - Jump slams, landing shockwaves and stuns, shield/ghost/Napalm/Disco support,
   terrain effects, destructible walls, and Bullet Hell turrets
@@ -165,3 +166,11 @@ and sends the browser session in an HTTP-only same-site cookie. Local account
 data defaults to `data/accounts.json`; set `ACCOUNTS_FILE` to use another path.
 Accounts and lifetime commendation counts are durable. Operational and security details are in the
 [account reference](docs/accounts.md).
+
+## One-off achievements
+
+Saved accounts can permanently unlock a starter set of nine Survival
+achievements, ranging from a first win and flawless round to eight-player wins,
+maximum growth, egg, jump, power-up, and Trident milestones. Anonymous unlocks
+remain available for in-room account conversion. See the complete rules in the
+[achievement reference](docs/achievements.md).

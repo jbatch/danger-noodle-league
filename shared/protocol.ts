@@ -1,4 +1,5 @@
 import type { CommendationCounts, CommendationId } from './badges.ts';
+import type { AchievementId } from './achievements.ts';
 
 export const WORLD_WIDTH = 1280;
 export const WORLD_HEIGHT = 672;
@@ -48,6 +49,7 @@ export type RoomPlayerSnapshot = {
   spectator: boolean;
   saved: boolean;
   commendations: CommendationCounts;
+  achievements: AchievementId[];
 };
 
 export type AccountIdentity = {
@@ -55,11 +57,17 @@ export type AccountIdentity = {
   username: string;
   createdAt: string;
   commendations: CommendationCounts;
+  achievements: AchievementId[];
 };
 
 export type RoundCommendationAward = {
   playerId: string;
   commendations: CommendationId[];
+};
+
+export type RoundAchievementUnlock = {
+  playerId: string;
+  achievements: AchievementId[];
 };
 
 export type PowerUpSnapshot = Point & {
@@ -174,6 +182,8 @@ export type GameSnapshot = {
   matchWinnerId: string | null;
   commendationEventId: number;
   roundCommendations: RoundCommendationAward[];
+  achievementEventId: number;
+  roundAchievements: RoundAchievementUnlock[];
   discoUntil: number | null;
   snakes: SnakeSnapshot[];
   food: FoodSnapshot[];

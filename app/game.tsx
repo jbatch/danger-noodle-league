@@ -63,6 +63,7 @@ import {
   type AssetPalette,
   type AudioAssetId,
 } from '@/shared/assets';
+import { ACHIEVEMENTS, ACHIEVEMENT_IDS } from '@/shared/achievements';
 import {
   COMMENDATIONS,
   COMMENDATION_IDS,
@@ -836,6 +837,32 @@ function RoundCommendations({ snapshot }: { snapshot: GameSnapshot }) {
               {award.commendations.map((id) => (
                 <abbr key={id} title={COMMENDATIONS[id].description}>
                   <b>{COMMENDATIONS[id].mark}</b> {COMMENDATIONS[id].label}
+                </abbr>
+              ))}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RoundAchievements({ snapshot }: { snapshot: GameSnapshot }) {
+  if (snapshot.roundAchievements.length === 0) return null;
+  return (
+    <div className="round-achievements" aria-label="Achievements unlocked">
+      <small>ACHIEVEMENTS UNLOCKED</small>
+      {snapshot.roundAchievements.map((unlock) => {
+        const player = snapshot.players.find(
+          (candidate) => candidate.id === unlock.playerId,
+        );
+        return (
+          <div key={unlock.playerId}>
+            <strong>{player?.name ?? 'Departed noodle'}</strong>
+            <span>
+              {unlock.achievements.map((id) => (
+                <abbr key={id} title={ACHIEVEMENTS[id].description}>
+                  <b>{ACHIEVEMENTS[id].mark}</b> {ACHIEVEMENTS[id].label}
                 </abbr>
               ))}
             </span>
@@ -1649,6 +1676,37 @@ export function DangerNoodleGame() {
                   ))}
                 </div>
               </div>
+              <div className="achievement-cabinet">
+                <small>
+                  ONE-OFF ACHIEVEMENTS ·{' '}
+                  {
+                    (localRoomPlayer?.achievements ?? account.achievements)
+                      .length
+                  }
+                  /{ACHIEVEMENT_IDS.length}
+                </small>
+                <div>
+                  {ACHIEVEMENT_IDS.map((id) => {
+                    const unlocked = (
+                      localRoomPlayer?.achievements ?? account.achievements
+                    ).includes(id);
+                    return (
+                      <abbr
+                        key={id}
+                        className={unlocked ? 'is-unlocked' : ''}
+                        title={ACHIEVEMENTS[id].description}
+                      >
+                        <b>{ACHIEVEMENTS[id].mark}</b>
+                        <span>
+                          <strong>{ACHIEVEMENTS[id].label}</strong>
+                          <small>{ACHIEVEMENTS[id].description}</small>
+                        </span>
+                        <em>{unlocked ? 'UNLOCKED' : 'LOCKED'}</em>
+                      </abbr>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           ) : (
             <form className="account-form" onSubmit={submitAccount}>
@@ -1896,6 +1954,14 @@ export function DangerNoodleGame() {
                           )}
                         </div>
                         <CommendationRow counts={player.commendations} />
+                        {player.achievements.length > 0 && (
+                          <small
+                            className="achievement-total"
+                            title={`${player.achievements.length} one-off achievements unlocked`}
+                          >
+                            ★ {player.achievements.length} ACHIEVEMENTS
+                          </small>
+                        )}
                       </div>
                       {player.id === snapshot.hostId && (
                         <small className="host-chip">
@@ -2123,6 +2189,7 @@ export function DangerNoodleGame() {
             <small>ROUND {snapshot.roundNumber}</small>
             <strong>{roundWinner ? `${roundWinner.name} WINS` : 'DRAW'}</strong>
             <RoundCommendations snapshot={snapshot} />
+            <RoundAchievements snapshot={snapshot} />
             <span>Next round in {phaseSeconds}</span>
           </div>
         )}
@@ -2133,6 +2200,7 @@ export function DangerNoodleGame() {
             <small>MATCH COMPLETE</small>
             <strong>{matchWinner?.name ?? 'NOODLE'} TAKES THE LEAGUE</strong>
             <RoundCommendations snapshot={snapshot} />
+            <RoundAchievements snapshot={snapshot} />
             {isHost ? (
               <div className="match-actions">
                 <Button onClick={() => sendControl({ type: 'rematch' })}>

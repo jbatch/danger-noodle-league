@@ -56,6 +56,7 @@ void test('Survival awards all ten round commendations from authoritative stats'
     headsLost: 0,
     peakTail: 350,
     eliminatedAt: null,
+    activatedCorePowerUps: new Set(),
   };
   guest.roundStats = {
     eggs: 5,
@@ -65,6 +66,7 @@ void test('Survival awards all ten round commendations from authoritative stats'
     headsLost: 1,
     peakTail: 300,
     eliminatedAt: 4_100,
+    activatedCorePowerUps: new Set(),
   };
   third.roundStats = {
     eggs: 5,
@@ -74,6 +76,7 @@ void test('Survival awards all ten round commendations from authoritative stats'
     headsLost: 2,
     peakTail: 200,
     eliminatedAt: 4_200,
+    activatedCorePowerUps: new Set(),
   };
 
   const hostSnake = room.snakes.get('host');

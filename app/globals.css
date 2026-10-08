@@ -180,6 +180,8 @@ input {
 .account-dialog {
   width: min(420px, calc(100% - 28px));
   max-width: 420px;
+  max-height: calc(100dvh - 28px);
+  overflow-y: auto;
   gap: 16px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
@@ -348,6 +350,77 @@ input {
   font-size: 8px;
   font-style: normal;
   font-weight: 900;
+}
+.achievement-cabinet {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.achievement-cabinet > small {
+  color: #9d865d;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+.achievement-cabinet > div {
+  display: grid;
+  gap: 5px;
+}
+.achievement-cabinet abbr {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 25px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.02);
+  color: #515866;
+  padding: 7px 8px;
+  text-decoration: none;
+}
+.achievement-cabinet abbr > b {
+  color: #5e6470;
+  text-align: center;
+  font-size: 15px;
+}
+.achievement-cabinet abbr > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.achievement-cabinet abbr strong {
+  color: #747b88;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+.achievement-cabinet abbr small {
+  overflow: hidden;
+  color: #505763;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 7px;
+}
+.achievement-cabinet abbr > em {
+  color: #555b66;
+  font-size: 6px;
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+.achievement-cabinet abbr.is-unlocked {
+  border-color: rgba(255, 195, 87, 0.24);
+  background: rgba(255, 195, 87, 0.045);
+}
+.achievement-cabinet abbr.is-unlocked > b,
+.achievement-cabinet abbr.is-unlocked > em {
+  color: #ffc357;
+}
+.achievement-cabinet abbr.is-unlocked strong {
+  color: #f4ecd9;
+}
+.achievement-cabinet abbr.is-unlocked small {
+  color: #8f8778;
 }
 .account-footer {
   align-items: center;
@@ -801,6 +874,12 @@ input {
   font-size: 7px;
   font-weight: 900;
 }
+.achievement-total {
+  color: #b89659;
+  font-size: 6px;
+  font-weight: 850;
+  letter-spacing: 0.05em;
+}
 .roster-list em,
 .host-chip {
   display: inline-flex;
@@ -915,6 +994,7 @@ input {
 .match-over-overlay {
   width: min(520px, calc(100% - 24px));
   max-height: calc(100% - 24px);
+  overflow-y: auto;
 }
 .round-commendations {
   width: 100%;
@@ -962,6 +1042,50 @@ input {
 }
 .round-commendations abbr b {
   color: var(--primary);
+}
+.round-achievements {
+  width: 100%;
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(255, 195, 87, 0.2);
+  border-radius: 5px;
+  background: rgba(255, 195, 87, 0.045);
+  padding: 7px;
+}
+.round-achievements > small {
+  color: #ffc357;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+.round-achievements > div {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.65fr) 1.35fr;
+  gap: 8px;
+  text-align: left;
+}
+.round-achievements > div > strong {
+  overflow: hidden;
+  color: #f4ecd9;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-geist-mono);
+  font-size: 8px;
+}
+.round-achievements > div > span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.round-achievements abbr {
+  color: #c8a96f;
+  font-size: 6px;
+  font-weight: 850;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.round-achievements abbr b {
+  color: #ffc357;
 }
 .countdown-overlay {
   min-width: 190px;

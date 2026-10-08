@@ -89,6 +89,8 @@ void test('an anonymous player can convert in place and return with the saved na
     snake.dots = 10;
     room.players.get(anonymousPlayerId)!.commendations['egg-lord'] = 2;
     room.players.get(anonymousPlayerId)!.pendingCommendations['egg-lord'] = 2;
+    room.players.get(anonymousPlayerId)!.achievements.add('first-win');
+    room.players.get(anonymousPlayerId)!.pendingAchievements.add('first-win');
     assert.equal(
       room.snapshot().players.find((player) => player.id === anonymousPlayerId)
         ?.commendations['egg-lord'],
@@ -100,7 +102,8 @@ void test('an anonymous player can convert in place and return with the saved na
       (player) =>
         player.name === 'Saved Noodle' &&
         player.saved &&
-        player.commendations['egg-lord'] === 2,
+        player.commendations['egg-lord'] === 2 &&
+        player.achievements.includes('first-win'),
     );
     const registerResponse = await fetch(`${baseUrl}/api/account/register`, {
       method: 'POST',
@@ -138,6 +141,7 @@ void test('an anonymous player can convert in place and return with the saved na
     if (returning.welcome.type !== 'welcome') return;
     assert.equal(returning.welcome.account?.username, 'Saved Noodle');
     assert.equal(returning.welcome.account?.commendations['egg-lord'], 2);
+    assert.deepEqual(returning.welcome.account?.achievements, ['first-win']);
     await waitForPlayer(
       returning.socket,
       (player) => player.name === 'Saved Noodle' && player.saved,
