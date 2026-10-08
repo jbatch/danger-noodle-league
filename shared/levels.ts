@@ -19,7 +19,7 @@ export type LevelSpawnArea = Point & {
 };
 
 export type LevelFixedItem = Point & {
-  kind: 'egg' | PowerUpType | 'ghost' | 'shield' | 'napalm' | 'disco-ball';
+  kind: 'egg' | PowerUpType;
   lifespan: number | null;
 };
 

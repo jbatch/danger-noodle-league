@@ -23,13 +23,15 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: 'Danger Noodle League',
-    description: 'Online snake arena — eat dots, get longer, and outlast the room.',
+    description:
+      'Online snake arena — eat dots, get longer, and outlast the room.',
     images: [{ url: '/site/og.png', width: 1200, height: 630 }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Danger Noodle League',
-    description: 'Online snake arena — eat dots, get longer, and outlast the room.',
+    description:
+      'Online snake arena — eat dots, get longer, and outlast the room.',
     images: ['/site/og.png'],
   },
 };

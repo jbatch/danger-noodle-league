@@ -8,6 +8,8 @@ import {
   type FoodSnapshot,
   type GameEvent,
   type GameEventType,
+  type GameMode,
+  type GamePhase,
   type GameSnapshot,
   type GrenadeSnapshot,
   type InputState,
@@ -15,10 +17,13 @@ import {
   type PowerUpSnapshot,
   type PowerUpType,
   type RailSnapshot,
+  type RoomPlayerSnapshot,
   type SnakeSnapshot,
   type TrailPoint,
+  type TurretShotSnapshot,
+  type TurretSnapshot,
 } from '../shared/protocol.ts';
-import { getLevel } from '../shared/levels.generated.ts';
+import { getLevel, LEVELS } from '../shared/levels.generated.ts';
 import type { CompiledLevel, LevelTile } from '../shared/levels.ts';
 
 const UPDATE_RATE = 60;
@@ -56,6 +61,13 @@ const BODY_RADIUS = 3;
 const FIREBALL_RADIUS = 16;
 const PICKUP_RADIUS = 22;
 const EVENT_HISTORY_LIMIT = 96;
+const COUNTDOWN_MS = 3_000;
+const ROUND_OVER_MS = 2_200;
+const INTERMISSION_MS = 2_000;
+const STUN_DURATION_MS = 1_000;
+const GHOST_DURATION_MS = 5_000;
+const TURRET_SHOT_SPEED = 4 * UPDATE_RATE;
+const TURRET_SHOT_RADIUS = 7;
 
 const POWER_UP_TYPES: PowerUpType[] = [
   'speed-boost',
@@ -108,23 +120,44 @@ type Snake = Omit<SnakeSnapshot, 'body'> & {
   spawnIndex: number;
   underwater: boolean;
   terrainErosion: number;
+  stunnedUntil: number;
+  ghostedUntil: number;
+  slamPower: number;
+  driftAngle: number;
+  summonSicknessUntil: number;
 };
 
-type WorldPowerUp = PowerUpSnapshot & { lifeRemaining: number };
+type WorldPowerUp = PowerUpSnapshot & {
+  lifeRemaining: number;
+  shrinking: boolean;
+};
 type Fireball = FireballSnapshot & { lifeRemaining: number };
 type Grenade = GrenadeSnapshot & {
   speed: number;
   elapsed: number;
+  blastRadius: number;
 };
 type Blast = BlastSnapshot & { elapsed: number };
 type Rail = RailSnapshot & { remaining: number };
+type Turret = TurretSnapshot & {
+  frequency: number;
+  shotClock: number;
+  rotationSpeed: number;
+  velocityX: number;
+  velocityY: number;
+};
+type TurretShot = TurretShotSnapshot;
 type DetachedTrail = Omit<DetachedTrailSnapshot, 'body'> & {
   body: InternalTrailPoint[];
 };
 
+type RoomPlayer = RoomPlayerSnapshot & { spawnIndex: number };
+
 export type GameRoomOptions = {
   levelId?: string;
   devMode?: boolean;
+  managedMatch?: boolean;
+  mode?: GameMode;
 };
 
 const EMPTY_INPUT: InputState = {
@@ -165,8 +198,10 @@ function normalizeAngle(angle: number) {
 
 export class GameRoom {
   readonly id: string;
-  readonly level: CompiledLevel;
+  level: CompiledLevel;
   readonly devMode: boolean;
+  readonly managedMatch: boolean;
+  readonly players = new Map<string, RoomPlayer>();
   readonly snakes = new Map<string, Snake>();
   readonly food: FoodSnapshot[] = [];
   readonly powerUps: WorldPowerUp[] = [];
@@ -174,6 +209,8 @@ export class GameRoom {
   readonly grenades: Grenade[] = [];
   readonly blasts: Blast[] = [];
   readonly rails: Rail[] = [];
+  readonly turrets: Turret[] = [];
+  readonly turretShots: TurretShot[] = [];
   readonly events: GameEvent[] = [];
   readonly detachedTrails: DetachedTrail[] = [];
   readonly destroyedWalls = new Set<number>();
@@ -188,10 +225,20 @@ export class GameRoom {
   private nextEventId = 1;
   private nextHeadId = 1;
   private nextDetachedTrailId = 1;
+  private nextTurretShotId = 1;
   private inputOrder = 0;
   private foodSpawnClock = 0;
   private powerUpSpawnClock = 0;
-  private nextPowerUpIndex = 0;
+  phase: GamePhase;
+  mode: GameMode;
+  hostId: string | null = null;
+  winsToMatch = 3;
+  roundNumber = 0;
+  phaseEndsAt: number | null = null;
+  roundWinnerId: string | null = null;
+  matchWinnerId: string | null = null;
+  discoUntil: number | null = null;
+  private roundOwners = new Set<string>();
 
   constructor(
     id: string,
@@ -201,57 +248,55 @@ export class GameRoom {
     this.id = id;
     this.random = random;
     this.devMode = Boolean(options.devMode);
+    this.managedMatch = Boolean(options.managedMatch);
+    this.mode =
+      options.mode ??
+      (this.devMode || !this.managedMatch ? 'quickplay' : 'survival');
+    this.phase = this.managedMatch && !this.devMode ? 'lobby' : 'playing';
     this.level = getLevel(this.devMode ? 'empty' : options.levelId);
-    for (const tile of this.level.terrain)
-      this.terrainByCell.set(`${tile.x},${tile.y}`, tile.frame);
+    this.loadLevelState();
     this.fillFood();
     if (this.devMode) {
-      const positions = [
-        { x: 0.2, y: 0.29 },
-        { x: 0.4, y: 0.29 },
-        { x: 0.6, y: 0.29 },
-        { x: 0.8, y: 0.29 },
-        { x: 0.3, y: 0.71 },
-        { x: 0.5, y: 0.71 },
-        { x: 0.7, y: 0.71 },
-      ];
-      for (let index = 0; index < POWER_UP_TYPES.length; index += 1) {
-        this.spawnPowerUp(
-          POWER_UP_TYPES[index],
-          {
-            x: WORLD_WIDTH * positions[index].x,
-            y: WORLD_HEIGHT * positions[index].y,
-          },
-          Number.POSITIVE_INFINITY,
-        );
-      }
+      this.seedDeveloperPowerUps();
     } else {
       this.spawnFixedItems();
     }
   }
 
-  addPlayer(id: string, name: string) {
+  addPlayer(id: string, name: string): Snake {
+    if (this.players.size >= 8) throw new Error('room is full');
     const color = Math.floor(this.random() * 360);
     const usedSpawns = new Set(
-      [...this.snakes.values()]
-        .filter((snake) => snake.id === snake.ownerId)
-        .map((snake) => snake.spawnIndex),
+      [...this.players.values()].map((player) => player.spawnIndex),
     );
     const spawnIndex = this.level.playerSpawns.findIndex(
       (_, index) => !usedSpawns.has(index),
     );
     if (spawnIndex < 0) throw new Error('room is full');
+    const player: RoomPlayer = {
+      id,
+      name: sanitizeName(name),
+      color,
+      ready: false,
+      wins: 0,
+      spectator:
+        this.managedMatch && this.mode === 'survival' && this.phase !== 'lobby',
+      spawnIndex,
+    };
+    this.players.set(id, player);
+    if (!this.hostId) this.hostId = id;
     const spawn = this.level.playerSpawns[spawnIndex];
     const snake = this.createSnake(
       id,
       id,
-      sanitizeName(name),
+      player.name,
       color,
       Date.now(),
-      true,
+      this.mode === 'quickplay',
       { ...spawn },
       spawnIndex,
     );
+    if (player.spectator) snake.alive = false;
     this.snakes.set(id, snake);
     return snake;
   }
@@ -260,6 +305,206 @@ export class GameRoom {
     for (const [id, snake] of this.snakes) {
       if (snake.ownerId === ownerId) this.snakes.delete(id);
     }
+    this.players.delete(ownerId);
+    this.roundOwners.delete(ownerId);
+    if (this.hostId === ownerId)
+      this.hostId = this.players.keys().next().value ?? null;
+  }
+
+  setReady(ownerId: string, ready: boolean) {
+    if (this.phase !== 'lobby') return;
+    const player = this.players.get(ownerId);
+    if (player) player.ready = ready;
+  }
+
+  configure(
+    ownerId: string,
+    settings: { mode?: GameMode; levelId?: string; winsToMatch?: number },
+  ) {
+    if (ownerId !== this.hostId || this.phase !== 'lobby') return false;
+    if (settings.mode === 'quickplay' || settings.mode === 'survival')
+      this.mode = settings.mode;
+    if (
+      settings.levelId &&
+      LEVELS.some((level) => level.id === settings.levelId && level.selectable)
+    ) {
+      this.level = getLevel(settings.levelId);
+      this.resetWorld(Date.now(), true);
+    }
+    if (Number.isInteger(settings.winsToMatch))
+      this.winsToMatch = Math.min(10, Math.max(1, settings.winsToMatch ?? 3));
+    for (const player of this.players.values()) player.ready = false;
+    return true;
+  }
+
+  canStartMatch() {
+    const minimumPlayers = this.mode === 'survival' ? 2 : 1;
+    return (
+      this.phase === 'lobby' &&
+      this.players.size >= minimumPlayers &&
+      [...this.players.values()].every((player) => player.ready)
+    );
+  }
+
+  startMatch(ownerId: string, now = Date.now()) {
+    if (ownerId !== this.hostId || !this.canStartMatch()) return false;
+    for (const player of this.players.values()) {
+      player.wins = 0;
+      player.spectator = false;
+      player.ready = false;
+    }
+    this.roundNumber = 0;
+    this.matchWinnerId = null;
+    this.beginRound(now);
+    return true;
+  }
+
+  rematch(ownerId: string, now = Date.now()) {
+    if (ownerId !== this.hostId || this.phase !== 'match-over') return false;
+    const minimumPlayers = this.mode === 'survival' ? 2 : 1;
+    if (this.players.size < minimumPlayers) return false;
+    for (const player of this.players.values()) {
+      player.ready = false;
+      player.wins = 0;
+      player.spectator = false;
+    }
+    this.roundNumber = 0;
+    this.matchWinnerId = null;
+    this.beginRound(now);
+    return true;
+  }
+
+  returnToLobby(ownerId: string, now = Date.now()) {
+    if (ownerId !== this.hostId) return false;
+    this.phase = 'lobby';
+    this.phaseEndsAt = null;
+    this.roundWinnerId = null;
+    this.matchWinnerId = null;
+    this.roundNumber = 0;
+    for (const player of this.players.values()) {
+      player.ready = false;
+      player.wins = 0;
+      player.spectator = false;
+    }
+    this.resetWorld(now, true);
+    return true;
+  }
+
+  private beginRound(now: number) {
+    this.roundNumber += 1;
+    this.roundWinnerId = null;
+    this.phase = 'countdown';
+    this.phaseEndsAt = now + COUNTDOWN_MS;
+    this.roundOwners = new Set(this.players.keys());
+    for (const player of this.players.values()) player.spectator = false;
+    this.resetWorld(now, true);
+  }
+
+  private endRound(winnerId: string | null, now: number) {
+    if (this.phase !== 'playing' || this.mode !== 'survival') return;
+    this.roundWinnerId = winnerId;
+    const winner = winnerId ? this.players.get(winnerId) : null;
+    if (winner) winner.wins += 1;
+    if (winner && winner.wins >= this.winsToMatch) {
+      this.matchWinnerId = winner.id;
+      this.phase = 'match-over';
+      this.phaseEndsAt = null;
+    } else {
+      this.phase = 'round-over';
+      this.phaseEndsAt = now + ROUND_OVER_MS;
+    }
+  }
+
+  private checkRoundWinner(now: number) {
+    if (this.phase !== 'playing' || this.roundOwners.size < 2) return;
+    const aliveOwners = new Set(
+      [...this.snakes.values()]
+        .filter((snake) => snake.alive && this.roundOwners.has(snake.ownerId))
+        .map((snake) => snake.ownerId),
+    );
+    if (aliveOwners.size <= 1)
+      this.endRound(aliveOwners.values().next().value ?? null, now);
+  }
+
+  private resetWorld(now: number, spawnPlayers: boolean) {
+    this.snakes.clear();
+    this.food.splice(0);
+    this.powerUps.splice(0);
+    this.fireballs.splice(0);
+    this.grenades.splice(0);
+    this.blasts.splice(0);
+    this.rails.splice(0);
+    this.turretShots.splice(0);
+    this.detachedTrails.splice(0);
+    this.destroyedWalls.clear();
+    this.foodSpawnClock = 0;
+    this.powerUpSpawnClock = 0;
+    this.loadLevelState();
+    if (spawnPlayers) {
+      for (const player of this.players.values()) {
+        if (player.spectator) continue;
+        const spawn = this.level.playerSpawns[player.spawnIndex];
+        this.snakes.set(
+          player.id,
+          this.createSnake(
+            player.id,
+            player.id,
+            player.name,
+            player.color,
+            now,
+            this.mode === 'quickplay',
+            { ...spawn },
+            player.spawnIndex,
+          ),
+        );
+      }
+    }
+    this.fillFood();
+    if (this.devMode) this.seedDeveloperPowerUps();
+    else this.spawnFixedItems();
+  }
+
+  private loadLevelState() {
+    this.terrainByCell.clear();
+    for (const tile of this.level.terrain)
+      this.terrainByCell.set(`${tile.x},${tile.y}`, tile.frame);
+    this.turrets.splice(0);
+    for (const feature of this.level.features) {
+      if (feature.frame !== 1) continue;
+      this.turrets.push({
+        id: feature.id,
+        x: feature.x,
+        y: feature.y,
+        angle: (feature.rotation * Math.PI) / 180,
+        frequency: Math.max(0.1, Number(feature.properties.frequency ?? 1)),
+        shotClock: 0,
+        rotationSpeed:
+          (Number(feature.properties.vr ?? 0) * Math.PI * UPDATE_RATE) / 180,
+        velocityX: Number(feature.properties.vx ?? 0) * UPDATE_RATE,
+        velocityY: Number(feature.properties.vy ?? 0) * UPDATE_RATE,
+      });
+    }
+  }
+
+  private seedDeveloperPowerUps() {
+    const positions = [
+      { x: 0.2, y: 0.29 },
+      { x: 0.4, y: 0.29 },
+      { x: 0.6, y: 0.29 },
+      { x: 0.8, y: 0.29 },
+      { x: 0.3, y: 0.71 },
+      { x: 0.5, y: 0.71 },
+      { x: 0.7, y: 0.71 },
+    ];
+    for (let index = 0; index < POWER_UP_TYPES.length; index += 1)
+      this.spawnPowerUp(
+        POWER_UP_TYPES[index],
+        {
+          x: WORLD_WIDTH * positions[index].x,
+          y: WORLD_HEIGHT * positions[index].y,
+        },
+        Number.POSITIVE_INFINITY,
+      );
   }
 
   setInput(ownerId: string, input: InputState) {
@@ -298,6 +543,8 @@ export class GameRoom {
       x: point.x,
       y: point.y,
       lifeRemaining,
+      scale: 0.01,
+      shrinking: false,
     };
     this.powerUps.push(powerUp);
     return powerUp;
@@ -305,7 +552,26 @@ export class GameRoom {
 
   step(now: number, dt: number) {
     const safeDt = Math.min(Math.max(dt, 0), 0.05);
+    if (this.managedMatch) {
+      if (this.phase === 'countdown' && now >= (this.phaseEndsAt ?? 0)) {
+        this.phase = 'playing';
+        this.phaseEndsAt = null;
+      } else if (
+        this.phase === 'round-over' &&
+        now >= (this.phaseEndsAt ?? 0)
+      ) {
+        this.phase = 'intermission';
+        this.phaseEndsAt = now + INTERMISSION_MS;
+      } else if (
+        this.phase === 'intermission' &&
+        now >= (this.phaseEndsAt ?? 0)
+      ) {
+        this.beginRound(now);
+      }
+      if (this.phase !== 'playing') return;
+    }
     this.updateWorldSpawns(safeDt);
+    this.advanceTurrets(safeDt, now);
     for (const trail of this.detachedTrails)
       for (const point of trail.body) point.collisionAge += 1;
 
@@ -319,30 +585,48 @@ export class GameRoom {
       for (const point of snake.body) point.collisionAge += 1;
 
       snake.invulnerable = now < snake.invulnerableUntil;
+      snake.ghosted = now < snake.ghostedUntil;
+      snake.stunned = now < snake.stunnedUntil;
       const jumpPressed = snake.input.jump && !snake.jumpWasDown;
       const powerPressed = snake.input.power && !snake.powerWasDown;
       snake.jumpWasDown = snake.input.jump;
       snake.powerWasDown = snake.input.power;
 
-      if (jumpPressed && snake.jumpRemaining <= 0)
+      if (jumpPressed && snake.jumpRemaining <= 0 && !snake.stunned)
         this.startJump(snake, BASIC_JUMP_DURATION, BASIC_JUMP_PEAK_SCALE);
-      if (powerPressed && snake.powerUp && snake.jumpRemaining <= 0)
+      else if (jumpPressed && snake.jumpRemaining > 0) {
+        snake.slamPower = Math.max(1, (snake.jumpScale - 1) * 3.6);
+        snake.jumpRemaining = Math.min(snake.jumpRemaining, 0.12);
+      }
+      if (
+        powerPressed &&
+        snake.powerUp &&
+        snake.jumpRemaining <= 0 &&
+        now >= snake.summonSicknessUntil
+      )
         this.activatePowerUp(snake, now);
 
       const airborne = snake.jumpRemaining > 0;
-      const terrain = airborne ? null : this.terrainAt(snake.head);
+      const terrain =
+        airborne || snake.ghosted ? null : this.terrainAt(snake.head);
       snake.underwater = terrain === 3;
       const turnMultiplier = terrain === 0 ? 0.35 : 1;
-      snake.angle = normalizeAngle(
-        snake.angle +
-          this.turnInput(snake) * TURN_SPEED * turnMultiplier * safeDt,
-      );
+      if (!snake.stunned)
+        snake.angle = normalizeAngle(
+          snake.angle +
+            this.turnInput(snake) * TURN_SPEED * turnMultiplier * safeDt,
+        );
 
       const speedMultiplier =
         terrain === 1 ? 0.5 : terrain === 3 ? 0.8 : terrain === 4 ? 1.333 : 1;
       const speed = (snake.baseSpeed + snake.speedBoost) * speedMultiplier;
-      const movementAngle = airborne ? snake.flightAngle : snake.angle;
-      const distance = speed * safeDt;
+      if (terrain !== 4) snake.driftAngle = snake.angle;
+      const movementAngle = airborne
+        ? snake.flightAngle
+        : terrain === 4
+          ? snake.driftAngle
+          : snake.angle;
+      const distance = snake.stunned ? 0 : speed * safeDt;
       const previous = { ...snake.head };
       snake.head.x = wrap(
         snake.head.x + Math.cos(movementAngle) * distance,
@@ -366,13 +650,20 @@ export class GameRoom {
           snake.jumpScale = 1;
           snake.trailSegment += 1;
           this.emitEvent('land', snake.head);
+          this.landShockwave(snake, now);
         }
       } else {
         snake.jump = 0;
         snake.jumpScale = 1;
         this.emitTrail(snake, previous, movementAngle, distance);
-        if (!snake.invulnerable && this.collidesWithWall(snake.head)) {
-          this.killSnake(snake, now);
+        if (
+          !snake.invulnerable &&
+          !snake.ghosted &&
+          this.collidesWithWall(snake.head)
+        ) {
+          const wall = this.wallAt(snake.head);
+          if (this.damageSnake(snake, 50, now) && wall && wall.frame !== 8)
+            this.destroyedWalls.add(wall.id);
           continue;
         }
         this.applyTerrain(snake, terrain, safeDt, now);
@@ -397,6 +688,8 @@ export class GameRoom {
     this.advanceEffects(safeDt);
     this.resolveHeadCollisions(now);
     this.resolveTrailCollisions(now);
+    if (this.managedMatch && this.mode === 'survival')
+      this.checkRoundWinner(now);
   }
 
   snapshot(now = Date.now()): GameSnapshot {
@@ -406,18 +699,43 @@ export class GameRoom {
       levelId: this.level.id,
       devMode: this.devMode,
       serverTime: now,
+      phase: this.phase,
+      mode: this.mode,
+      hostId: this.hostId,
+      players: [...this.players.values()].map(
+        ({ spawnIndex: _, ...player }) => ({ ...player }),
+      ),
+      winsToMatch: this.winsToMatch,
+      roundNumber: this.roundNumber,
+      phaseEndsAt: this.phaseEndsAt,
+      roundWinnerId: this.roundWinnerId,
+      matchWinnerId: this.matchWinnerId,
+      discoUntil: this.discoUntil,
       food: this.food.map((item) => ({ ...item })),
-      powerUps: this.powerUps.map(({ lifeRemaining: _, ...item }) => ({
-        ...item,
-      })),
+      powerUps: this.powerUps.map(
+        ({ lifeRemaining: _, shrinking: __, ...item }) => ({ ...item }),
+      ),
       fireballs: this.fireballs.map(({ lifeRemaining: _, ...item }) => ({
         ...item,
       })),
-      grenades: this.grenades.map(({ speed: _, elapsed: __, ...item }) => ({
-        ...item,
-      })),
+      grenades: this.grenades.map(
+        ({ speed: _, elapsed: __, blastRadius: ___, ...item }) => ({ ...item }),
+      ),
       blasts: this.blasts.map(({ elapsed: _, ...item }) => ({ ...item })),
       rails: this.rails.map(({ remaining: _, ...item }) => ({ ...item })),
+      turrets: this.turrets.map(
+        ({
+          frequency: _,
+          shotClock: __,
+          rotationSpeed: ___,
+          velocityX: ____,
+          velocityY: _____,
+          ...item
+        }) => ({
+          ...item,
+        }),
+      ),
+      turretShots: this.turretShots.map((shot) => ({ ...shot })),
       events: this.events.map((event) => ({ ...event })),
       detachedTrails: this.detachedTrails.map((trail) => ({
         id: trail.id,
@@ -442,6 +760,9 @@ export class GameRoom {
         pingMs: snake.pingMs,
         powerUp: snake.powerUp,
         speedBoost: snake.speedBoost,
+        shield: snake.shield,
+        ghosted: snake.ghosted,
+        stunned: snake.stunned,
       })),
     };
   }
@@ -515,7 +836,12 @@ export class GameRoom {
     for (let index = this.powerUps.length - 1; index >= 0; index -= 1) {
       const powerUp = this.powerUps[index];
       if (toroidalDistance(snake.head, powerUp) >= PICKUP_RADIUS) continue;
-      snake.powerUp = powerUp.type;
+      if (powerUp.type === 'shield') snake.shield = 100;
+      else if (powerUp.type === 'tron-mode')
+        snake.targetLength += Math.round(360 / TRAIL_SPACING);
+      else if (powerUp.type === 'disco-ball')
+        this.discoUntil = Date.now() + 10_000;
+      else snake.powerUp = powerUp.type;
       this.powerUps.splice(index, 1);
       this.emitEvent('power-up-collected', powerUp, powerUp.type);
     }
@@ -538,6 +864,9 @@ export class GameRoom {
       case 'grenade':
         this.throwGrenade(snake);
         break;
+      case 'napalm':
+        this.throwGrenade(snake, 50);
+        break;
       case 'one-eighty':
         this.oneEighty(snake);
         this.emitEvent('one-eighty', snake.head);
@@ -547,6 +876,19 @@ export class GameRoom {
         break;
       case 'trident':
         this.addTridentHeads(snake, now);
+        break;
+      case 'ghost':
+        snake.ghosted = true;
+        snake.ghostedUntil = now + GHOST_DURATION_MS;
+        break;
+      case 'tron-mode':
+        snake.targetLength += Math.round(360 / TRAIL_SPACING);
+        break;
+      case 'shield':
+        snake.shield = 100;
+        break;
+      case 'disco-ball':
+        this.discoUntil = now + 10_000;
         break;
     }
   }
@@ -564,7 +906,7 @@ export class GameRoom {
     this.emitEvent('fireball-launched', snake.head);
   }
 
-  private throwGrenade(snake: Snake) {
+  private throwGrenade(snake: Snake, blastRadius = GRENADE_BLAST_RADIUS) {
     this.grenades.push({
       id: this.nextGrenadeId++,
       ownerId: snake.id,
@@ -574,6 +916,7 @@ export class GameRoom {
       scale: GRENADE_START_SCALE,
       speed: snake.baseSpeed + snake.speedBoost + GRENADE_EXTRA_SPEED,
       elapsed: 0,
+      blastRadius,
     });
   }
 
@@ -654,7 +997,7 @@ export class GameRoom {
       if (!closest || along < closest.distance)
         closest = { snake, distance: along };
     }
-    if (closest) this.killSnake(closest.snake, now);
+    if (closest) this.damageSnake(closest.snake, 100, now);
   }
 
   private addTridentHeads(source: Snake, now: number) {
@@ -757,8 +1100,9 @@ export class GameRoom {
       id: this.nextBlastId++,
       x: grenade.x,
       y: grenade.y,
-      radius: GRENADE_BLAST_RADIUS,
+      radius: grenade.blastRadius,
       progress: 0,
+      kind: 'explosion',
       elapsed: 0,
     });
     for (const snake of this.snakes.values()) {
@@ -766,14 +1110,14 @@ export class GameRoom {
         snake.alive &&
         !snake.invulnerable &&
         snake.jumpRemaining <= 0 &&
-        toroidalDistance(grenade, snake.head) < GRENADE_BLAST_RADIUS
+        toroidalDistance(grenade, snake.head) < grenade.blastRadius
       )
-        this.killSnake(snake, now);
+        this.damageSnake(snake, 50, now);
 
       let removed = 0;
       for (let index = snake.body.length - 1; index >= 0; index -= 1) {
         if (
-          toroidalDistance(grenade, snake.body[index]) < GRENADE_BLAST_RADIUS
+          toroidalDistance(grenade, snake.body[index]) < grenade.blastRadius
         ) {
           snake.body.splice(index, 1);
           removed += 1;
@@ -784,14 +1128,14 @@ export class GameRoom {
     }
     for (const trail of this.detachedTrails) {
       for (let index = trail.body.length - 1; index >= 0; index -= 1) {
-        if (toroidalDistance(grenade, trail.body[index]) < GRENADE_BLAST_RADIUS)
+        if (toroidalDistance(grenade, trail.body[index]) < grenade.blastRadius)
           trail.body.splice(index, 1);
       }
     }
     this.removeEmptyDetachedTrails();
     for (let index = this.fireballs.length - 1; index >= 0; index -= 1) {
       if (
-        toroidalDistance(grenade, this.fireballs[index]) < GRENADE_BLAST_RADIUS
+        toroidalDistance(grenade, this.fireballs[index]) < grenade.blastRadius
       )
         this.fireballs.splice(index, 1);
     }
@@ -799,9 +1143,13 @@ export class GameRoom {
       if (
         wall.frame !== 8 &&
         !this.destroyedWalls.has(wall.id) &&
-        this.distanceToWall(grenade, wall) < GRENADE_BLAST_RADIUS
+        this.distanceToWall(grenade, wall) < grenade.blastRadius
       )
         this.destroyedWalls.add(wall.id);
+    }
+    for (let index = this.turrets.length - 1; index >= 0; index -= 1) {
+      if (toroidalDistance(grenade, this.turrets[index]) < grenade.blastRadius)
+        this.turrets.splice(index, 1);
     }
   }
 
@@ -865,7 +1213,7 @@ export class GameRoom {
           toroidalDistance(fireball, snake.head) <
           FIREBALL_RADIUS + HEAD_RADIUS
         ) {
-          this.killSnake(snake, now);
+          this.damageSnake(snake, 100, now);
           destroyed.add(fireball.id);
           this.emitEvent('fireball-impact', fireball);
           break;
@@ -920,6 +1268,103 @@ export class GameRoom {
     }
   }
 
+  private landShockwave(source: Snake, now: number) {
+    const magnitude = Math.max(1, source.slamPower || 1);
+    const radius = Math.min(150, 40 * magnitude);
+    source.slamPower = 0;
+    this.blasts.push({
+      id: this.nextBlastId++,
+      x: source.head.x,
+      y: source.head.y,
+      radius,
+      progress: 0,
+      kind: 'shockwave',
+      elapsed: 0,
+    });
+    for (const snake of this.snakes.values()) {
+      if (
+        snake.id === source.id ||
+        !snake.alive ||
+        snake.invulnerable ||
+        snake.ghosted ||
+        snake.jumpRemaining > 0
+      )
+        continue;
+      if (toroidalDistance(source.head, snake.head) < radius) {
+        snake.stunned = true;
+        snake.stunnedUntil = now + STUN_DURATION_MS;
+      }
+    }
+  }
+
+  private advanceTurrets(dt: number, now: number) {
+    for (const turret of this.turrets) {
+      turret.x = wrap(turret.x + turret.velocityX * dt, WORLD_WIDTH);
+      turret.y = wrap(turret.y + turret.velocityY * dt, WORLD_HEIGHT);
+      turret.angle = normalizeAngle(turret.angle + turret.rotationSpeed * dt);
+      turret.shotClock += dt;
+      while (turret.shotClock >= turret.frequency) {
+        turret.shotClock -= turret.frequency;
+        this.turretShots.push({
+          id: this.nextTurretShotId++,
+          x: wrap(turret.x + Math.cos(turret.angle) * 22, WORLD_WIDTH),
+          y: wrap(turret.y + Math.sin(turret.angle) * 22, WORLD_HEIGHT),
+          angle: turret.angle,
+        });
+      }
+    }
+
+    for (let index = this.turretShots.length - 1; index >= 0; index -= 1) {
+      const shot = this.turretShots[index];
+      shot.x = wrap(
+        shot.x + Math.cos(shot.angle) * TURRET_SHOT_SPEED * dt,
+        WORLD_WIDTH,
+      );
+      shot.y = wrap(
+        shot.y + Math.sin(shot.angle) * TURRET_SHOT_SPEED * dt,
+        WORLD_HEIGHT,
+      );
+      let remove = this.collidesWithWall(shot, TURRET_SHOT_RADIUS);
+      if (!remove) {
+        for (const snake of this.snakes.values()) {
+          if (
+            !snake.alive ||
+            snake.invulnerable ||
+            snake.ghosted ||
+            snake.jumpRemaining > 0
+          )
+            continue;
+          if (
+            toroidalDistance(shot, snake.head) <
+            TURRET_SHOT_RADIUS + HEAD_RADIUS
+          ) {
+            this.damageSnake(snake, 100, now);
+            remove = true;
+            break;
+          }
+        }
+      }
+      if (remove) this.turretShots.splice(index, 1);
+    }
+
+    for (let index = this.turrets.length - 1; index >= 0; index -= 1) {
+      const turret = this.turrets[index];
+      for (const snake of this.snakes.values()) {
+        if (
+          !snake.alive ||
+          snake.invulnerable ||
+          snake.ghosted ||
+          snake.jumpRemaining > 0
+        )
+          continue;
+        if (toroidalDistance(turret, snake.head) < 23) {
+          if (this.damageSnake(snake, 100, now)) this.turrets.splice(index, 1);
+          break;
+        }
+      }
+    }
+  }
+
   private resolveTrailCollisions(now: number) {
     const collisions = new Set<string>();
     for (const snake of this.snakes.values()) {
@@ -962,7 +1407,7 @@ export class GameRoom {
     }
     for (const snakeId of collisions) {
       const snake = this.snakes.get(snakeId);
-      if (snake?.alive) this.killSnake(snake, now);
+      if (snake?.alive) this.damageSnake(snake, 25, now);
     }
   }
 
@@ -984,14 +1429,32 @@ export class GameRoom {
     snake.body = [];
     snake.powerUp = null;
     snake.speedBoost = 0;
+    snake.shield = 0;
+    snake.ghosted = false;
+    snake.stunned = false;
 
     const ownerStillAlive = [...this.snakes.values()].some(
       (head) => head.ownerId === snake.ownerId && head.alive,
     );
     if (!ownerStillAlive) {
       const primary = this.snakes.get(snake.ownerId);
-      if (primary?.respawns) primary.respawnAt = now + RESPAWN_DELAY_MS;
+      if (primary?.respawns && this.mode === 'quickplay')
+        primary.respawnAt = now + RESPAWN_DELAY_MS;
     }
+  }
+
+  private damageSnake(snake: Snake, amount: number, now: number) {
+    if (!snake.alive || snake.invulnerable || snake.ghosted) return false;
+    if (snake.shield > 0) {
+      snake.shield = Math.max(0, snake.shield - amount);
+      if (snake.shield === 0) {
+        snake.invulnerable = true;
+        snake.invulnerableUntil = now + 1_500;
+      }
+      return true;
+    }
+    this.killSnake(snake, now);
+    return false;
   }
 
   private updateWorldSpawns(dt: number) {
@@ -1002,17 +1465,23 @@ export class GameRoom {
     }
 
     for (let index = this.powerUps.length - 1; index >= 0; index -= 1) {
-      this.powerUps[index].lifeRemaining -= dt;
-      if (this.powerUps[index].lifeRemaining <= 0)
-        this.powerUps.splice(index, 1);
+      const powerUp = this.powerUps[index];
+      if (powerUp.shrinking) {
+        powerUp.scale -= dt * UPDATE_RATE * 0.1;
+        if (powerUp.scale <= 0) this.powerUps.splice(index, 1);
+        continue;
+      }
+      powerUp.scale = Math.min(1, powerUp.scale + dt * UPDATE_RATE * 0.1);
+      powerUp.lifeRemaining -= dt;
+      if (powerUp.lifeRemaining <= 0) powerUp.shrinking = true;
     }
     this.powerUpSpawnClock += dt;
     while (this.powerUpSpawnClock >= this.level.powerUpSpawnFrequency) {
       this.powerUpSpawnClock -= this.level.powerUpSpawnFrequency;
       if (this.devMode || this.level.powerUpSpawns.length === 0) continue;
-      this.spawnPowerUp(POWER_UP_TYPES[this.nextPowerUpIndex]);
-      this.nextPowerUpIndex =
-        (this.nextPowerUpIndex + 1) % POWER_UP_TYPES.length;
+      this.spawnPowerUp(
+        POWER_UP_TYPES[Math.floor(this.random() * POWER_UP_TYPES.length)],
+      );
     }
   }
 
@@ -1025,22 +1494,48 @@ export class GameRoom {
   }
 
   private randomArenaPoint() {
-    return {
-      x: 34 + this.random() * (WORLD_WIDTH - 68),
-      y: 34 + this.random() * (WORLD_HEIGHT - 68),
-    };
+    let point = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      point = {
+        x: 34 + this.random() * (WORLD_WIDTH - 68),
+        y: 34 + this.random() * (WORLD_HEIGHT - 68),
+      };
+      if (this.isSafeWorldSpawn(point)) return point;
+    }
+    return point;
   }
 
   private randomPowerUpPoint() {
     if (this.level.powerUpSpawns.length === 0) return this.randomArenaPoint();
-    const area =
-      this.level.powerUpSpawns[
-        Math.floor(this.random() * this.level.powerUpSpawns.length)
-      ];
-    return {
-      x: area.x + this.random() * area.width,
-      y: area.y + this.random() * area.height,
-    };
+    let point = this.randomArenaPoint();
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const area =
+        this.level.powerUpSpawns[
+          Math.floor(this.random() * this.level.powerUpSpawns.length)
+        ];
+      point = {
+        x: area.x + this.random() * area.width,
+        y: area.y + this.random() * area.height,
+      };
+      if (this.isSafeWorldSpawn(point)) return point;
+    }
+    return point;
+  }
+
+  private isSafeWorldSpawn(point: Point) {
+    if (this.collidesWithWall(point, PICKUP_RADIUS)) return false;
+    if (this.terrainAt(point) === 2) return false;
+    if (
+      [...this.snakes.values()].some(
+        (snake) =>
+          snake.alive &&
+          toroidalDistance(point, snake.head) < PICKUP_RADIUS * 2,
+      )
+    )
+      return false;
+    return !this.turrets.some(
+      (turret) => toroidalDistance(point, turret) < PICKUP_RADIUS * 2,
+    );
   }
 
   private respawn(snake: Snake, now: number) {
@@ -1095,6 +1590,9 @@ export class GameRoom {
       pingMs: null,
       powerUp: null,
       speedBoost: 0,
+      shield: 0,
+      ghosted: false,
+      stunned: false,
       input: { ...EMPTY_INPUT },
       baseSpeed: BASE_SPEED,
       targetLength: START_TRAIL_POINTS,
@@ -1115,6 +1613,11 @@ export class GameRoom {
       spawnIndex,
       underwater: false,
       terrainErosion: 0,
+      stunnedUntil: 0,
+      ghostedUntil: 0,
+      slamPower: 0,
+      driftAngle: angle,
+      summonSicknessUntil: now + 3 * (1_000 / UPDATE_RATE),
     };
   }
 
@@ -1144,6 +1647,10 @@ export class GameRoom {
     dt: number,
     now: number,
   ) {
+    if (terrain === 5) {
+      this.endRound(snake.ownerId, now);
+      return;
+    }
     if (terrain !== 2) return;
     const ticks = Math.round(dt * UPDATE_RATE);
     for (let tick = 0; tick < ticks; tick += 1) {
@@ -1152,7 +1659,7 @@ export class GameRoom {
       while (snake.terrainErosion >= TRAIL_SPACING) {
         snake.terrainErosion -= TRAIL_SPACING;
         if (snake.targetLength <= 1) {
-          this.killSnake(snake, now);
+          this.damageSnake(snake, 1, now);
           return;
         }
         snake.targetLength -= 1;
@@ -1209,7 +1716,7 @@ export class GameRoom {
     }
     for (const id of collisions) {
       const snake = this.snakes.get(id);
-      if (snake?.alive) this.killSnake(snake, now);
+      if (snake?.alive) this.damageSnake(snake, 100, now);
     }
   }
 

@@ -186,6 +186,7 @@ export function createGameServer(
       new GameRoom(roomId, Math.random, {
         devMode,
         levelId: levelId ?? undefined,
+        managedMatch: true,
       });
     rooms.set(roomId, room);
     try {
@@ -229,6 +230,20 @@ export function createGameServer(
           Number.isFinite(message.pingMs)
         ) {
           room.setPing(playerId, message.pingMs);
+        } else if (message.type === 'ready') {
+          room.setReady(playerId, Boolean(message.ready));
+        } else if (message.type === 'configure') {
+          room.configure(playerId, {
+            mode: message.mode,
+            levelId: message.levelId,
+            winsToMatch: message.winsToMatch,
+          });
+        } else if (message.type === 'start-match') {
+          room.startMatch(playerId);
+        } else if (message.type === 'rematch') {
+          room.rematch(playerId);
+        } else if (message.type === 'return-to-lobby') {
+          room.returnToLobby(playerId);
         }
       } catch {
         // Ignore malformed client messages; the next valid input wins.
@@ -237,7 +252,7 @@ export function createGameServer(
 
     socket.on('close', () => {
       room.removePlayer(playerId);
-      if (room.snakes.size === 0) rooms.delete(roomId);
+      if (room.players.size === 0) rooms.delete(roomId);
     });
   });
 

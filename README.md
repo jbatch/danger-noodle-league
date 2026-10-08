@@ -22,6 +22,12 @@ The reverse-engineered replication target—including original movement, jumping
 - Self- and opponent-tail collisions
 - Room codes and copyable invite URLs
 - Server-authoritative simulation for all players in a room
+- Host-controlled room lobbies with ready state, arena selection, and match settings
+- Survival rounds with countdowns, elimination, round wins, match winners, rematches,
+  spectators, and host migration
+- Quickplay mode preserving the original fast automatic-respawn loop
+- Jump slams, landing shockwaves and stuns, shield/ghost/Napalm/Disco support,
+  terrain effects, destructible walls, and Bullet Hell turrets
 
 ## Run it
 
@@ -68,8 +74,8 @@ npm run build
 Pushes to `main` run the tests and production build, then publish these images
 to GitHub Container Registry:
 
-- `ghcr.io/jbatch/danger-noodle-league:latest`
-- `ghcr.io/jbatch/danger-noodle-league:<git-sha>`
+- `ghcr.io/jbatch/danger-noodle:latest`
+- `ghcr.io/jbatch/danger-noodle:<git-sha>`
 
 Set the optional repository Actions variable `NEXT_PUBLIC_SITE_URL` to the
 public HTTPS origin if Open Graph metadata should use the production hostname.

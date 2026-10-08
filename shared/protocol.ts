@@ -20,11 +20,36 @@ export type PowerUpType =
   | 'grenade'
   | 'one-eighty'
   | 'rail-gun'
-  | 'trident';
+  | 'trident'
+  | 'ghost'
+  | 'tron-mode'
+  | 'shield'
+  | 'napalm'
+  | 'disco-ball';
+
+export type GameMode = 'quickplay' | 'survival';
+
+export type GamePhase =
+  | 'lobby'
+  | 'countdown'
+  | 'playing'
+  | 'round-over'
+  | 'intermission'
+  | 'match-over';
+
+export type RoomPlayerSnapshot = {
+  id: string;
+  name: string;
+  color: number;
+  ready: boolean;
+  wins: number;
+  spectator: boolean;
+};
 
 export type PowerUpSnapshot = Point & {
   id: number;
   type: PowerUpType;
+  scale: number;
 };
 
 export type GameEventType =
@@ -64,6 +89,17 @@ export type BlastSnapshot = Point & {
   id: number;
   radius: number;
   progress: number;
+  kind: 'explosion' | 'shockwave';
+};
+
+export type TurretSnapshot = Point & {
+  id: number;
+  angle: number;
+};
+
+export type TurretShotSnapshot = Point & {
+  id: number;
+  angle: number;
 };
 
 export type RailSnapshot = {
@@ -99,6 +135,9 @@ export type SnakeSnapshot = {
   pingMs: number | null;
   powerUp: PowerUpType | null;
   speedBoost: number;
+  shield: number;
+  ghosted: boolean;
+  stunned: boolean;
 };
 
 export type GameSnapshot = {
@@ -107,6 +146,16 @@ export type GameSnapshot = {
   levelId: string;
   devMode: boolean;
   serverTime: number;
+  phase: GamePhase;
+  mode: GameMode;
+  hostId: string | null;
+  players: RoomPlayerSnapshot[];
+  winsToMatch: number;
+  roundNumber: number;
+  phaseEndsAt: number | null;
+  roundWinnerId: string | null;
+  matchWinnerId: string | null;
+  discoUntil: number | null;
   snakes: SnakeSnapshot[];
   food: FoodSnapshot[];
   powerUps: PowerUpSnapshot[];
@@ -114,6 +163,8 @@ export type GameSnapshot = {
   grenades: GrenadeSnapshot[];
   blasts: BlastSnapshot[];
   rails: RailSnapshot[];
+  turrets: TurretSnapshot[];
+  turretShots: TurretShotSnapshot[];
   events: GameEvent[];
   detachedTrails: DetachedTrailSnapshot[];
   destroyedWalls: number[];
@@ -135,4 +186,14 @@ export type ServerMessage = WelcomeMessage | GameSnapshot | PongMessage;
 export type ClientMessage =
   | { type: 'input'; input: InputState; sequence: number }
   | { type: 'ping'; sentAt: number }
-  | { type: 'latency'; pingMs: number };
+  | { type: 'latency'; pingMs: number }
+  | { type: 'ready'; ready: boolean }
+  | {
+      type: 'configure';
+      mode?: GameMode;
+      levelId?: string;
+      winsToMatch?: number;
+    }
+  | { type: 'start-match' }
+  | { type: 'rematch' }
+  | { type: 'return-to-lobby' };

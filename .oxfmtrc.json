@@ -8,6 +8,8 @@
     "pnpm-lock.yaml",
     "yarn.lock",
     "bun.lock",
-    "bun.lockb"
+    "bun.lockb",
+    "shared/levels.generated.ts",
+    "docs/viper-league-behaviour-reference.md"
   ]
 }

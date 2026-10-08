@@ -18,6 +18,7 @@
     "pretest": "npm run levels:check",
     "test": "node --test server/*.test.ts",
     "lint": "oxlint",
+    "format:check": "oxfmt --check",
     "format": "oxfmt"
   },
   "dependencies": {

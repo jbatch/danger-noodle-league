@@ -7,10 +7,15 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  Check,
   Copy,
+  Crown,
   Music2,
   Radio,
   RotateCcw,
+  Settings2,
+  Swords,
+  Trophy,
   Users,
   Volume1,
   VolumeX,
@@ -20,12 +25,18 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Kbd } from '@/components/ui/kbd';
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Slider } from '@/components/ui/slider';
 import {
   SNAKE_HEAD_RADIUS,
   WORLD_HEIGHT,
@@ -93,6 +104,11 @@ const POWER_UP_APPEARANCE: Record<
   'one-eighty': { color: '#8dff67', icon: '↶', name: 'ONE EIGHTY' },
   'rail-gun': { color: '#f5f7ff', icon: '━', name: 'RAIL GUN' },
   trident: { color: '#ba79ff', icon: 'Ψ', name: 'TRIDENT' },
+  ghost: { color: '#b7c8df', icon: '◇', name: 'GHOST' },
+  'tron-mode': { color: '#45fff3', icon: '▰', name: 'TRON MODE' },
+  shield: { color: '#65a8ff', icon: '⬡', name: 'SHIELD' },
+  napalm: { color: '#ff3d2e', icon: '✦', name: 'NAPALM' },
+  'disco-ball': { color: '#ff63f3', icon: '◆', name: 'DISCO BALL' },
 };
 
 const SFX_LIBRARY = {
@@ -154,6 +170,26 @@ const SFX_LIBRARY = {
   },
   'pickup-trident': {
     source: '/audio/sfx/Pickup_MiscSwish01.wav',
+    volume: 0.42,
+  },
+  'pickup-ghost': {
+    source: '/audio/sfx/Magic_Disappear.wav',
+    volume: 0.42,
+  },
+  'pickup-tron-mode': {
+    source: '/audio/sfx/Pickup_Magic_Speed04.wav',
+    volume: 0.42,
+  },
+  'pickup-shield': {
+    source: '/audio/sfx/Pickup_Scifi_Energy01.wav',
+    volume: 0.42,
+  },
+  'pickup-napalm': {
+    source: '/audio/sfx/Pickup_Fire.wav',
+    volume: 0.42,
+  },
+  'pickup-disco-ball': {
+    source: '/audio/sfx/Magic_Appear01.wav',
     volume: 0.42,
   },
 } as const;
@@ -347,7 +383,8 @@ function drawArena(
   }
 
   for (const powerUp of snapshot.powerUps) {
-    const pulse = 1 + Math.sin(clock * 0.006 + powerUp.id) * 0.08;
+    const pulse =
+      (1 + Math.sin(clock * 0.006 + powerUp.id) * 0.08) * powerUp.scale;
     const appearance = POWER_UP_APPEARANCE[powerUp.type];
     context.save();
     context.translate(powerUp.x, powerUp.y);
@@ -368,6 +405,35 @@ function drawArena(
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     context.fillText(appearance.icon, 0, -1);
+    context.restore();
+  }
+
+  for (const turret of snapshot.turrets) {
+    context.save();
+    context.translate(turret.x, turret.y);
+    context.rotate(turret.angle);
+    context.shadowBlur = 16;
+    context.shadowColor = '#ff506d';
+    context.fillStyle = '#252a36';
+    context.strokeStyle = '#ff506d';
+    context.lineWidth = 3;
+    context.beginPath();
+    context.arc(0, 0, 13, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.fillStyle = '#ff7188';
+    context.fillRect(4, -4, 22, 8);
+    context.restore();
+  }
+
+  for (const shot of snapshot.turretShots) {
+    context.save();
+    context.shadowBlur = 14;
+    context.shadowColor = '#ff3d62';
+    context.fillStyle = '#ff7188';
+    context.beginPath();
+    context.arc(shot.x, shot.y, 6, 0, Math.PI * 2);
+    context.fill();
     context.restore();
   }
 
@@ -435,14 +501,24 @@ function drawArena(
       blast.y,
       radius,
     );
-    glow.addColorStop(0, 'rgba(255,250,190,.9)');
-    glow.addColorStop(0.35, 'rgba(255,155,45,.7)');
-    glow.addColorStop(1, 'rgba(255,66,20,0)');
+    const shockwave = blast.kind === 'shockwave';
+    glow.addColorStop(
+      0,
+      shockwave ? 'rgba(202,244,255,.2)' : 'rgba(255,250,190,.9)',
+    );
+    glow.addColorStop(
+      0.35,
+      shockwave ? 'rgba(90,220,255,.25)' : 'rgba(255,155,45,.7)',
+    );
+    glow.addColorStop(
+      1,
+      shockwave ? 'rgba(90,220,255,0)' : 'rgba(255,66,20,0)',
+    );
     context.fillStyle = glow;
     context.beginPath();
     context.arc(blast.x, blast.y, radius, 0, Math.PI * 2);
     context.fill();
-    context.strokeStyle = '#ffd84d';
+    context.strokeStyle = shockwave ? '#7fe8ff' : '#ffd84d';
     context.lineWidth = 4;
     context.stroke();
     context.restore();
@@ -479,6 +555,15 @@ function drawArena(
 
   for (const snake of snapshot.snakes)
     drawSnake(context, snake, snake.ownerId === playerId, clock);
+
+  if (snapshot.discoUntil && snapshot.discoUntil > snapshot.serverTime) {
+    context.save();
+    context.globalCompositeOperation = 'screen';
+    context.globalAlpha = 0.13;
+    context.fillStyle = `hsl(${(clock * 0.12) % 360} 100% 55%)`;
+    context.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    context.restore();
+  }
   context.restore();
 }
 
@@ -491,6 +576,10 @@ function drawSnake(
   if (!snake.alive) return;
   const headScale = snake.jumpScale;
   const head = snake.head;
+  const snakeAlpha = snake.ghosted ? 0.28 : 1;
+
+  context.save();
+  context.globalAlpha = snakeAlpha;
 
   if (snake.jump > 0.02) {
     context.save();
@@ -510,7 +599,6 @@ function drawSnake(
     context.restore();
   }
 
-  context.save();
   context.lineCap = 'round';
   context.lineJoin = 'round';
   for (let index = snake.body.length - 1; index > 0; index -= 1) {
@@ -551,7 +639,7 @@ function drawSnake(
     context.stroke();
   }
 
-  context.globalAlpha = 1;
+  context.globalAlpha = snakeAlpha;
   if (snake.speedBoost > 0) {
     context.strokeStyle = 'rgba(90,242,255,.68)';
     context.lineWidth = 3;
@@ -575,6 +663,23 @@ function drawSnake(
   context.arc(head.x, head.y, SNAKE_HEAD_RADIUS * headScale, 0, Math.PI * 2);
   context.fill();
   context.shadowBlur = 0;
+
+  if (snake.shield > 0) {
+    context.strokeStyle = `rgba(101,168,255,${0.45 + snake.shield / 200})`;
+    context.lineWidth = 2.5;
+    context.shadowBlur = 12;
+    context.shadowColor = '#65a8ff';
+    context.beginPath();
+    context.arc(head.x, head.y, 13 * headScale, 0, Math.PI * 2);
+    context.stroke();
+    context.shadowBlur = 0;
+  }
+
+  if (snake.stunned) {
+    context.fillStyle = '#7fe8ff';
+    context.font = '900 13px ui-monospace, monospace';
+    context.fillText('✦  ✦', head.x, head.y - 16);
+  }
 
   context.strokeStyle = '#071018';
   context.lineWidth = 3;
@@ -625,11 +730,16 @@ function powerUpName(powerUp: PowerUpType | null) {
   return powerUp ? POWER_UP_APPEARANCE[powerUp].name : 'EMPTY';
 }
 
+function sliderValue(value: number | readonly number[]) {
+  return typeof value === 'number' ? value : (value[0] ?? 0);
+}
+
 export function DangerNoodleGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const sfxPoolRef = useRef<SfxPool>(new Map());
   const sfxEnabledRef = useRef(true);
+  const sfxVolumeRef = useRef(1);
   const sfxUnlockedRef = useRef(false);
   const lastEventIdRef = useRef<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -651,14 +761,22 @@ export function DangerNoodleGame() {
   const [copied, setCopied] = useState(false);
   const [musicEnabled, setMusicEnabled] = useState(true);
   const [sfxEnabled, setSfxEnabled] = useState(true);
+  const [musicVolume, setMusicVolume] = useState(0.38);
+  const [sfxVolume, setSfxVolume] = useState(1);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     const audio = new Audio('/audio/music/snakes-theme.ogg');
     audioRef.current = audio;
     audio.preload = 'auto';
-    audio.volume = 0.38;
+    const storedVolume = Number(localStorage.getItem('dnl-music-volume'));
+    const initialVolume = Number.isFinite(storedVolume)
+      ? Math.min(1, Math.max(0, storedVolume))
+      : 0.38;
+    audio.volume = initialVolume;
     audio.loop = true;
     const timer = window.setTimeout(() => {
+      setMusicVolume(initialVolume);
       const enabled = localStorage.getItem('dnl-music-muted') !== 'true';
       setMusicEnabled(enabled);
       if (enabled) {
@@ -697,6 +815,11 @@ export function DangerNoodleGame() {
 
   useEffect(() => {
     const pool: SfxPool = new Map();
+    const storedVolume = Number(localStorage.getItem('dnl-sfx-volume'));
+    const initialVolume = Number.isFinite(storedVolume)
+      ? Math.min(1, Math.max(0, storedVolume))
+      : 1;
+    sfxVolumeRef.current = initialVolume;
     for (const [key, config] of Object.entries(SFX_LIBRARY) as [
       SfxKey,
       (typeof SFX_LIBRARY)[SfxKey],
@@ -704,7 +827,7 @@ export function DangerNoodleGame() {
       const voices = Array.from({ length: 4 }, () => {
         const voice = new Audio(config.source);
         voice.preload = 'auto';
-        voice.volume = config.volume;
+        voice.volume = config.volume * initialVolume;
         return voice;
       });
       pool.set(key, { cursor: 0, voices });
@@ -712,7 +835,10 @@ export function DangerNoodleGame() {
     sfxPoolRef.current = pool;
     const enabled = localStorage.getItem('dnl-sfx-muted') !== 'true';
     sfxEnabledRef.current = enabled;
-    const settingsTimer = window.setTimeout(() => setSfxEnabled(enabled), 0);
+    const settingsTimer = window.setTimeout(() => {
+      setSfxVolume(initialVolume);
+      setSfxEnabled(enabled);
+    }, 0);
     window.addEventListener('pointerdown', unlockSfx, {
       capture: true,
       once: true,
@@ -740,9 +866,10 @@ export function DangerNoodleGame() {
       if (event.id <= lastEventIdRef.current) continue;
       const key = soundForEvent(event);
       const sound = key ? sfxPoolRef.current.get(key) : null;
-      if (!sound || !sfxEnabledRef.current) continue;
+      if (!key || !sound || !sfxEnabledRef.current) continue;
       const voice = sound.voices[sound.cursor];
       sound.cursor = (sound.cursor + 1) % sound.voices.length;
+      voice.volume = SFX_LIBRARY[key].volume * sfxVolumeRef.current;
       voice.currentTime = 0;
       void voice.play().catch(() => undefined);
     }
@@ -828,6 +955,7 @@ export function DangerNoodleGame() {
           playGameEvents(message.events ?? []);
           snapshotRef.current = message;
           setSnapshot(message);
+          setSelectedLevel(message.levelId);
         }
         if (message.type === 'pong' && socket.readyState === WebSocket.OPEN) {
           socket.send(
@@ -876,6 +1004,12 @@ export function DangerNoodleGame() {
     const timer = window.setInterval(sendPing, 2_000);
     return () => window.clearInterval(timer);
   }, [joined, sendPing]);
+
+  useEffect(() => {
+    if (!joined) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 100);
+    return () => window.clearInterval(timer);
+  }, [joined]);
 
   useEffect(() => {
     if (!joined) return;
@@ -957,6 +1091,20 @@ export function DangerNoodleGame() {
     setMusicEnabled(nextEnabled);
   };
 
+  const playThemeOnRepeat = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.loop = true;
+    if (audio.volume === 0) {
+      audio.volume = 0.38;
+      localStorage.setItem('dnl-music-volume', '0.38');
+      setMusicVolume(0.38);
+    }
+    localStorage.setItem('dnl-music-muted', 'false');
+    setMusicEnabled(true);
+    void audio.play().catch(() => undefined);
+  };
+
   const toggleSfx = () => {
     const nextEnabled = !sfxEnabled;
     sfxEnabledRef.current = nextEnabled;
@@ -964,6 +1112,26 @@ export function DangerNoodleGame() {
     setSfxEnabled(nextEnabled);
     if (nextEnabled) unlockSfx();
     else stopSfx(sfxPoolRef.current);
+  };
+
+  const changeMusicVolume = (value: number) => {
+    const next = Math.min(1, Math.max(0, value));
+    if (audioRef.current) audioRef.current.volume = next;
+    localStorage.setItem('dnl-music-volume', String(next));
+    setMusicVolume(next);
+  };
+
+  const changeSfxVolume = (value: number) => {
+    const next = Math.min(1, Math.max(0, value));
+    sfxVolumeRef.current = next;
+    localStorage.setItem('dnl-sfx-volume', String(next));
+    setSfxVolume(next);
+  };
+
+  const sendControl = (message: object) => {
+    const socket = socketRef.current;
+    if (socket?.readyState === WebSocket.OPEN)
+      socket.send(JSON.stringify(message));
   };
 
   const localHeads = snapshot?.snakes.filter(
@@ -976,6 +1144,26 @@ export function DangerNoodleGame() {
   const scoreboard = snapshot?.snakes.filter(
     (snake) => snake.id === snake.ownerId,
   );
+  const localRoomPlayer = snapshot?.players.find(
+    (player) => player.id === playerId,
+  );
+  const isHost = snapshot?.hostId === playerId;
+  const minimumPlayers = snapshot?.mode === 'survival' ? 2 : 1;
+  const canStart = Boolean(
+    snapshot &&
+    snapshot.players.length >= minimumPlayers &&
+    snapshot.players.every((player) => player.ready),
+  );
+  const phaseSeconds = Math.max(
+    0,
+    Math.ceil(((snapshot?.phaseEndsAt ?? now) - now) / 1000),
+  );
+  const roundWinner = snapshot?.players.find(
+    (player) => player.id === snapshot.roundWinnerId,
+  );
+  const matchWinner = snapshot?.players.find(
+    (player) => player.id === snapshot.matchWinnerId,
+  );
 
   return (
     <main className="game-shell">
@@ -987,7 +1175,7 @@ export function DangerNoodleGame() {
             <span />
           </div>
           <div>
-            <p className="eyebrow">ONLINE ARENA TEST 03</p>
+            <p className="eyebrow">MULTIPLAYER SNAKE COMBAT</p>
             <h1>Danger Noodle League</h1>
           </div>
         </div>
@@ -1014,6 +1202,43 @@ export function DangerNoodleGame() {
           >
             {sfxEnabled ? <Volume1 /> : <VolumeX />}
           </Button>
+          <Popover>
+            <PopoverTrigger
+              className="audio-settings-trigger"
+              aria-label="Audio volume settings"
+              title="Audio volume settings"
+            >
+              <Settings2 />
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              sideOffset={8}
+              className="audio-settings-panel"
+            >
+              <div>
+                <label htmlFor="music-volume">Music</label>
+                <output>{Math.round(musicVolume * 100)}%</output>
+              </div>
+              <Slider
+                id="music-volume"
+                value={[musicVolume * 100]}
+                onValueChange={(value) =>
+                  changeMusicVolume(sliderValue(value) / 100)
+                }
+              />
+              <div>
+                <label htmlFor="sfx-volume">Sound effects</label>
+                <output>{Math.round(sfxVolume * 100)}%</output>
+              </div>
+              <Slider
+                id="sfx-volume"
+                value={[sfxVolume * 100]}
+                onValueChange={(value) =>
+                  changeSfxVolume(sliderValue(value) / 100)
+                }
+              />
+            </PopoverContent>
+          </Popover>
           <Badge variant="outline" className={`status-pill status-${status}`}>
             <Radio data-icon="inline-start" />{' '}
             {status === 'connected' ? 'LIVE' : status.toUpperCase()}
@@ -1131,13 +1356,194 @@ export function DangerNoodleGame() {
                 ENTER ARENA <ArrowRight />
               </Button>
             </form>
+            <Button
+              type="button"
+              variant="ghost"
+              className="theme-repeat-button"
+              onClick={playThemeOnRepeat}
+            >
+              Play the theme song on repeat thanks
+            </Button>
           </div>
         )}
 
-        {joined && snapshot && (
+        {joined && snapshot?.phase === 'lobby' && (
+          <div className="match-lobby">
+            <div className="match-lobby-heading">
+              <div>
+                <p className="lobby-kicker">ROOM {snapshot.room}</p>
+                <h2>Choose your chaos.</h2>
+                <p>
+                  {snapshot.mode === 'survival'
+                    ? 'Last noodle alive wins the round. First to the match target takes the league.'
+                    : 'Endless drop-in mayhem with fast automatic respawns.'}
+                </p>
+              </div>
+              <Button variant="outline" onClick={copyInvite}>
+                <Copy /> {copied ? 'COPIED' : 'COPY INVITE'}
+              </Button>
+            </div>
+
+            <div className="match-lobby-grid">
+              <section className="room-roster" aria-label="Room players">
+                <div className="panel-label">
+                  <Users /> PLAYERS · {snapshot.players.length}/8
+                </div>
+                <div className="roster-list">
+                  {snapshot.players.map((player) => (
+                    <div
+                      key={player.id}
+                      className={player.ready ? 'ready' : ''}
+                    >
+                      <span
+                        className="roster-color"
+                        style={{ background: `hsl(${player.color} 90% 65%)` }}
+                      />
+                      <strong>{player.name}</strong>
+                      {player.id === snapshot.hostId && (
+                        <small className="host-chip">
+                          <Crown /> HOST
+                        </small>
+                      )}
+                      <em>
+                        {player.ready ? (
+                          <>
+                            <Check /> READY
+                          </>
+                        ) : (
+                          'NOT READY'
+                        )}
+                      </em>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="room-settings" aria-label="Match settings">
+                <div className="panel-label">
+                  <Swords /> MATCH SETUP
+                </div>
+                <label htmlFor="room-mode">Mode</label>
+                <Select
+                  value={snapshot.mode}
+                  disabled={!isHost}
+                  onValueChange={(value) =>
+                    value && sendControl({ type: 'configure', mode: value })
+                  }
+                >
+                  <SelectTrigger id="room-mode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="survival">Survival</SelectItem>
+                    <SelectItem value="quickplay">Quickplay</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <label htmlFor="room-level">Arena</label>
+                <div className="level-picker-row">
+                  <div
+                    className="level-preview"
+                    aria-hidden="true"
+                    style={{
+                      backgroundImage: `url(${getLevel(snapshot.levelId).previewSmall})`,
+                    }}
+                  />
+                  <Select
+                    value={snapshot.levelId}
+                    disabled={!isHost}
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      const url = new URL(window.location.href);
+                      url.searchParams.set('level', value);
+                      window.history.replaceState({}, '', url);
+                      sendControl({ type: 'configure', levelId: value });
+                    }}
+                  >
+                    <SelectTrigger id="room-level">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LEVELS.filter((level) => level.selectable).map(
+                        (level) => (
+                          <SelectItem key={level.id} value={level.id}>
+                            {level.displayName}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {snapshot.mode === 'survival' && (
+                  <>
+                    <label htmlFor="wins-target">Match target</label>
+                    <Select
+                      value={String(snapshot.winsToMatch)}
+                      disabled={!isHost}
+                      onValueChange={(value) =>
+                        value &&
+                        sendControl({
+                          type: 'configure',
+                          winsToMatch: Number(value),
+                        })
+                      }
+                    >
+                      <SelectTrigger id="wins-target">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[1, 3, 5, 10].map((target) => (
+                          <SelectItem key={target} value={String(target)}>
+                            First to {target}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </>
+                )}
+              </section>
+            </div>
+
+            <div className="lobby-actions">
+              <Button
+                variant={localRoomPlayer?.ready ? 'outline' : 'default'}
+                onClick={() =>
+                  sendControl({
+                    type: 'ready',
+                    ready: !localRoomPlayer?.ready,
+                  })
+                }
+              >
+                {localRoomPlayer?.ready ? 'NOT READY' : 'READY UP'}
+              </Button>
+              {isHost && (
+                <Button
+                  className="start-match-button"
+                  disabled={!canStart}
+                  onClick={() => sendControl({ type: 'start-match' })}
+                >
+                  START {snapshot.mode === 'survival' ? 'MATCH' : 'QUICKPLAY'}
+                  <ArrowRight />
+                </Button>
+              )}
+              {!isHost && <p>Waiting for the host to start the match.</p>}
+              {isHost && !canStart && (
+                <p>
+                  {snapshot.players.length < minimumPlayers
+                    ? `Survival needs at least ${minimumPlayers} players.`
+                    : 'Everyone must be ready.'}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {joined && snapshot && snapshot.phase !== 'lobby' && (
           <div className="arena-hud">
             <div className="player-count">
-              <Users /> {scoreboard?.length ?? 0} ONLINE
+              <Users /> {snapshot.players.length} ONLINE ·{' '}
+              {snapshot.mode.toUpperCase()}
             </div>
             <div className="score-strip">
               {[...(scoreboard ?? [])]
@@ -1155,15 +1561,83 @@ export function DangerNoodleGame() {
                       {snake.pingMs === null ? '—' : snake.pingMs}ms
                     </small>
                     <em>{snake.dots}</em>
+                    {snapshot.mode === 'survival' && (
+                      <b>
+                        {snapshot.players.find(
+                          (player) => player.id === snake.ownerId,
+                        )?.wins ?? 0}
+                        /{snapshot.winsToMatch}
+                      </b>
+                    )}
                   </div>
                 ))}
             </div>
+            {isHost && snapshot.phase === 'playing' && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="return-lobby-button"
+                onClick={() => sendControl({ type: 'return-to-lobby' })}
+              >
+                RETURN TO LOBBY
+              </Button>
+            )}
           </div>
         )}
 
-        {joined && localPlayer && !localPlayer.alive && (
-          <div className="respawn-banner">KNOTTED. REFORMING…</div>
+        {snapshot?.phase === 'countdown' && (
+          <div className="phase-overlay countdown-overlay">
+            <small>ROUND {snapshot.roundNumber}</small>
+            <strong>{phaseSeconds || 'GO'}</strong>
+            <span>{getLevel(snapshot.levelId).displayName}</span>
+          </div>
         )}
+
+        {(snapshot?.phase === 'round-over' ||
+          snapshot?.phase === 'intermission') && (
+          <div className="phase-overlay result-overlay">
+            <Trophy />
+            <small>ROUND {snapshot.roundNumber}</small>
+            <strong>{roundWinner ? `${roundWinner.name} WINS` : 'DRAW'}</strong>
+            <span>Next round in {phaseSeconds}</span>
+          </div>
+        )}
+
+        {snapshot?.phase === 'match-over' && (
+          <div className="phase-overlay match-over-overlay">
+            <Trophy />
+            <small>MATCH COMPLETE</small>
+            <strong>{matchWinner?.name ?? 'NOODLE'} TAKES THE LEAGUE</strong>
+            {isHost ? (
+              <div>
+                <Button onClick={() => sendControl({ type: 'rematch' })}>
+                  REMATCH
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => sendControl({ type: 'return-to-lobby' })}
+                >
+                  CHANGE SETTINGS
+                </Button>
+              </div>
+            ) : (
+              <span>Waiting for the host.</span>
+            )}
+          </div>
+        )}
+
+        {joined &&
+          snapshot?.phase === 'playing' &&
+          localPlayer &&
+          !localPlayer.alive && (
+            <div className="respawn-banner">
+              {localRoomPlayer?.spectator
+                ? 'SPECTATING · JOINING NEXT ROUND'
+                : snapshot.mode === 'quickplay'
+                  ? 'KNOTTED. REFORMING…'
+                  : 'ELIMINATED · WATCH THE ROUND'}
+            </div>
+          )}
         {joined && status === 'offline' && (
           <div className="offline-banner">
             MULTIPLAYER SERVER LOST — RECONNECTING
