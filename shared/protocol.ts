@@ -142,6 +142,7 @@ export type SnakeSnapshot = {
 
 export type GameSnapshot = {
   type: 'snapshot';
+  sequence: number;
   room: string;
   levelId: string;
   devMode: boolean;
@@ -170,6 +171,26 @@ export type GameSnapshot = {
   destroyedWalls: number[];
 };
 
+export type PackedSnakeSnapshot = Omit<SnakeSnapshot, 'body'> & {
+  body: string;
+};
+
+export type PackedDetachedTrailSnapshot = Omit<
+  DetachedTrailSnapshot,
+  'body'
+> & {
+  body: string;
+};
+
+export type PackedGameSnapshot = Omit<
+  GameSnapshot,
+  'snakes' | 'detachedTrails'
+> & {
+  encoding: 'trail-pack-v1';
+  snakes: PackedSnakeSnapshot[];
+  detachedTrails: PackedDetachedTrailSnapshot[];
+};
+
 export type WelcomeMessage = {
   type: 'welcome';
   playerId: string;
@@ -181,7 +202,7 @@ export type PongMessage = {
   sentAt: number;
 };
 
-export type ServerMessage = WelcomeMessage | GameSnapshot | PongMessage;
+export type ServerMessage = WelcomeMessage | PackedGameSnapshot | PongMessage;
 
 export type ClientMessage =
   | { type: 'input'; input: InputState; sequence: number }
@@ -196,4 +217,12 @@ export type ClientMessage =
     }
   | { type: 'start-match' }
   | { type: 'rematch' }
-  | { type: 'return-to-lobby' };
+  | { type: 'return-to-lobby' }
+  | {
+      type: 'network-stats';
+      snapshotIntervalMs: number;
+      snapshotJitterMs: number;
+      snapshotDecodeMs: number;
+      droppedSnapshots: number;
+      staleSnapshots: number;
+    };

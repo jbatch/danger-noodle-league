@@ -9,9 +9,12 @@ import { pathToFileURL } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { ClientMessage, InputState } from '../shared/protocol.ts';
 import { GameRoom } from './simulation.ts';
+import { encodeSnapshotPayload } from './snapshot-codec.ts';
+import { NetworkTelemetry } from './telemetry.ts';
 
 const STEP_RATE = 60;
 const SNAPSHOT_RATE = 20;
+const MAX_SOCKET_BUFFERED_BYTES = 128 * 1024;
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
   'keep-alive',
@@ -65,13 +68,39 @@ export function createGameServer(
   },
 ) {
   const rooms = new Map<string, GameRoom>();
+  const telemetry = new NetworkTelemetry();
   let nextPlayerId = 1;
   const frontend = frontendUrl ? new URL(frontendUrl) : null;
 
   const httpServer: HttpServer = createServer((request, response) => {
-    if (request.url === '/health') {
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ ok: true, rooms: rooms.size }));
+    const pathname = new URL(request.url || '/', 'http://localhost').pathname;
+    if (pathname === '/health') {
+      response.writeHead(200, {
+        'cache-control': 'no-store',
+        'content-type': 'application/json',
+      });
+      response.end(
+        JSON.stringify({
+          ok: true,
+          rooms: rooms.size,
+          connections: webSockets.clients.size,
+        }),
+      );
+      return;
+    }
+    if (pathname === '/telemetry') {
+      response.writeHead(200, {
+        'cache-control': 'no-store',
+        'content-type': 'application/json',
+      });
+      response.end(
+        JSON.stringify(
+          telemetry.snapshot({
+            rooms: rooms.size,
+            connections: webSockets.clients.size,
+          }),
+        ),
+      );
       return;
     }
     if (frontend) {
@@ -136,7 +165,40 @@ export function createGameServer(
     response.end('Danger Noodle League multiplayer server');
   });
 
-  const webSockets = new WebSocketServer({ noServer: true, maxPayload: 8_192 });
+  const webSockets = new WebSocketServer({
+    noServer: true,
+    maxPayload: 8_192,
+    perMessageDeflate: {
+      threshold: 1_024,
+      concurrencyLimit: 10,
+      clientNoContextTakeover: true,
+      serverNoContextTakeover: true,
+      zlibDeflateOptions: { level: 6, memLevel: 7 },
+    },
+  });
+
+  function encodeSnapshot(room: GameRoom) {
+    const started = performance.now();
+    const encoded = encodeSnapshotPayload(room.snapshot());
+    telemetry.snapshotEncodeMs.observe(performance.now() - started);
+    telemetry.snapshotBytes.observe(encoded.bytes);
+    telemetry.snapshotsEncoded += 1;
+    return encoded;
+  }
+
+  function sendSnapshot(
+    socket: PlayerSocket,
+    encoded: { payload: string; bytes: number },
+  ) {
+    telemetry.socketBufferedBytes.observe(socket.bufferedAmount);
+    if (socket.bufferedAmount > MAX_SOCKET_BUFFERED_BYTES) {
+      telemetry.snapshotsSkippedBackpressure += 1;
+      return;
+    }
+    socket.send(encoded.payload);
+    telemetry.snapshotsSent += 1;
+    telemetry.snapshotBytesSent += encoded.bytes;
+  }
 
   httpServer.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url || '/', 'http://localhost');
@@ -174,7 +236,10 @@ export function createGameServer(
   });
 
   webSockets.on('connection', (rawSocket, request) => {
+    telemetry.connectionsAccepted += 1;
     const socket = rawSocket as PlayerSocket;
+    if (socket.extensions.includes('permessage-deflate'))
+      telemetry.compressionNegotiatedConnections += 1;
     const url = new URL(request.url || '/', 'http://localhost');
     const roomId = cleanRoom(url.searchParams.get('room'));
     const name = cleanName(url.searchParams.get('name'));
@@ -192,6 +257,7 @@ export function createGameServer(
     try {
       room.addPlayer(playerId, name);
     } catch {
+      telemetry.connectionsClosed += 1;
       socket.close(1008, 'Room is full');
       return;
     }
@@ -204,9 +270,19 @@ export function createGameServer(
     });
 
     socket.send(JSON.stringify({ type: 'welcome', playerId, room: roomId }));
-    socket.send(JSON.stringify(room.snapshot()));
+    const initialSnapshot = encodeSnapshot(room);
+    for (const rawRoomSocket of webSockets.clients) {
+      const roomSocket = rawRoomSocket as PlayerSocket;
+      if (
+        roomSocket.readyState !== WebSocket.OPEN ||
+        roomSocket.roomId !== roomId
+      )
+        continue;
+      sendSnapshot(roomSocket, initialSnapshot);
+    }
 
     socket.on('message', (data) => {
+      telemetry.messagesReceived += 1;
       try {
         const text =
           data instanceof ArrayBuffer
@@ -230,6 +306,33 @@ export function createGameServer(
           Number.isFinite(message.pingMs)
         ) {
           room.setPing(playerId, message.pingMs);
+          telemetry.roundTripMs.observe(message.pingMs);
+        } else if (
+          message.type === 'network-stats' &&
+          Number.isFinite(message.snapshotIntervalMs) &&
+          message.snapshotIntervalMs >= 0 &&
+          Number.isFinite(message.snapshotJitterMs) &&
+          message.snapshotJitterMs >= 0 &&
+          Number.isFinite(message.snapshotDecodeMs) &&
+          message.snapshotDecodeMs >= 0 &&
+          Number.isSafeInteger(message.droppedSnapshots) &&
+          message.droppedSnapshots >= 0 &&
+          Number.isSafeInteger(message.staleSnapshots) &&
+          message.staleSnapshots >= 0
+        ) {
+          telemetry.clientSnapshotIntervalMs.observe(
+            message.snapshotIntervalMs,
+          );
+          telemetry.clientSnapshotJitterMs.observe(message.snapshotJitterMs);
+          telemetry.clientSnapshotDecodeMs.observe(message.snapshotDecodeMs);
+          telemetry.clientReportedDroppedSnapshots += Math.min(
+            message.droppedSnapshots,
+            1_000_000,
+          );
+          telemetry.clientReportedStaleSnapshots += Math.min(
+            message.staleSnapshots,
+            1_000_000,
+          );
         } else if (message.type === 'ready') {
           room.setReady(playerId, Boolean(message.ready));
         } else if (message.type === 'configure') {
@@ -246,11 +349,13 @@ export function createGameServer(
           room.returnToLobby(playerId);
         }
       } catch {
+        telemetry.malformedMessages += 1;
         // Ignore malformed client messages; the next valid input wins.
       }
     });
 
     socket.on('close', () => {
+      telemetry.connectionsClosed += 1;
       room.removePlayer(playerId);
       if (room.players.size === 0) rooms.delete(roomId);
     });
@@ -258,31 +363,38 @@ export function createGameServer(
 
   const fixedStep = 1 / STEP_RATE;
   let lastStep = performance.now();
+  let lastStepTimer = lastStep;
   let accumulated = 0;
   const stepTimer = setInterval(() => {
     const current = performance.now();
+    telemetry.eventLoopLagMs.observe(
+      Math.max(0, current - lastStepTimer - 1000 / STEP_RATE),
+    );
+    lastStepTimer = current;
     accumulated = Math.min(accumulated + (current - lastStep) / 1000, 0.25);
     lastStep = current;
     while (accumulated >= fixedStep) {
+      const tickStarted = performance.now();
       const now = Date.now();
       for (const room of rooms.values()) room.step(now, fixedStep);
+      telemetry.tickDurationMs.observe(performance.now() - tickStarted);
       accumulated -= fixedStep;
     }
   }, 1000 / STEP_RATE);
 
   const snapshotTimer = setInterval(() => {
-    const snapshots = new Map<string, string>();
+    const snapshots = new Map<string, { payload: string; bytes: number }>();
     for (const rawSocket of webSockets.clients) {
       const socket = rawSocket as PlayerSocket;
       if (socket.readyState !== WebSocket.OPEN || !socket.roomId) continue;
-      let payload = snapshots.get(socket.roomId);
-      if (!payload) {
+      let encoded = snapshots.get(socket.roomId);
+      if (!encoded) {
         const room = rooms.get(socket.roomId);
         if (!room) continue;
-        payload = JSON.stringify(room.snapshot());
-        snapshots.set(socket.roomId, payload);
+        encoded = encodeSnapshot(room);
+        snapshots.set(socket.roomId, encoded);
       }
-      socket.send(payload);
+      sendSnapshot(socket, encoded);
     }
   }, 1000 / SNAPSHOT_RATE);
 
@@ -314,7 +426,7 @@ export function createGameServer(
     });
   }
 
-  return { httpServer, webSockets, rooms, close };
+  return { httpServer, webSockets, rooms, telemetry, close };
 }
 
 export async function startGameServer(port = Number(process.env.PORT || 3000)) {

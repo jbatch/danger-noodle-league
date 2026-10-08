@@ -50,6 +50,7 @@ import {
 } from '@/shared/protocol';
 import { getLevel, LEVELS } from '@/shared/levels.generated';
 import type { CompiledLevel, LevelTile } from '@/shared/levels';
+import { unpackSnapshot } from '@/shared/snapshot-codec';
 
 type ConnectionState =
   | 'idle'
@@ -750,6 +751,15 @@ export function DangerNoodleGame() {
     () => undefined,
   );
   const sequenceRef = useRef(0);
+  const networkStatsRef = useRef({
+    lastArrival: null as number | null,
+    lastSequence: null as number | null,
+    intervals: [] as number[],
+    decodeDurations: [] as number[],
+    droppedSnapshots: 0,
+    staleSnapshots: 0,
+    lastReportAt: 0,
+  });
   const devConnectedRef = useRef(false);
   const [snapshot, setSnapshot] = useState<GameSnapshot | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
@@ -922,6 +932,15 @@ export function DangerNoodleGame() {
       }
       disconnect();
       lastEventIdRef.current = null;
+      networkStatsRef.current = {
+        lastArrival: null,
+        lastSequence: null,
+        intervals: [],
+        decodeDurations: [],
+        droppedSnapshots: 0,
+        staleSnapshots: 0,
+        lastReportAt: performance.now(),
+      };
       const safeRoom =
         nextRoom
           .toUpperCase()
@@ -952,10 +971,62 @@ export function DangerNoodleGame() {
         const message = JSON.parse(event.data) as ServerMessage;
         if (message.type === 'welcome') setPlayerId(message.playerId);
         if (message.type === 'snapshot') {
-          playGameEvents(message.events ?? []);
-          snapshotRef.current = message;
-          setSnapshot(message);
-          setSelectedLevel(message.levelId);
+          const arrival = performance.now();
+          const decoded = unpackSnapshot(message);
+          const network = networkStatsRef.current;
+          network.decodeDurations.push(performance.now() - arrival);
+          if (network.lastArrival !== null)
+            network.intervals.push(arrival - network.lastArrival);
+          if (network.lastSequence !== null) {
+            if (message.sequence <= network.lastSequence)
+              network.staleSnapshots += 1;
+            else if (message.sequence > network.lastSequence + 1)
+              network.droppedSnapshots +=
+                message.sequence - network.lastSequence - 1;
+          }
+          network.lastArrival = arrival;
+          network.lastSequence = Math.max(
+            network.lastSequence ?? message.sequence,
+            message.sequence,
+          );
+          if (
+            arrival - network.lastReportAt >= 2_000 &&
+            network.intervals.length > 1 &&
+            socket.readyState === WebSocket.OPEN
+          ) {
+            const intervalMean =
+              network.intervals.reduce((total, value) => total + value, 0) /
+              network.intervals.length;
+            const intervalVariance =
+              network.intervals.reduce(
+                (total, value) => total + (value - intervalMean) ** 2,
+                0,
+              ) / network.intervals.length;
+            const decodeMean =
+              network.decodeDurations.reduce(
+                (total, value) => total + value,
+                0,
+              ) / network.decodeDurations.length;
+            socket.send(
+              JSON.stringify({
+                type: 'network-stats',
+                snapshotIntervalMs: intervalMean,
+                snapshotJitterMs: Math.sqrt(intervalVariance),
+                snapshotDecodeMs: decodeMean,
+                droppedSnapshots: network.droppedSnapshots,
+                staleSnapshots: network.staleSnapshots,
+              }),
+            );
+            network.intervals = [];
+            network.decodeDurations = [];
+            network.droppedSnapshots = 0;
+            network.staleSnapshots = 0;
+            network.lastReportAt = arrival;
+          }
+          playGameEvents(decoded.events ?? []);
+          snapshotRef.current = decoded;
+          setSnapshot(decoded);
+          setSelectedLevel(decoded.levelId);
         }
         if (message.type === 'pong' && socket.readyState === WebSocket.OPEN) {
           socket.send(

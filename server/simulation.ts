@@ -212,6 +212,7 @@ export class GameRoom {
   readonly turrets: Turret[] = [];
   readonly turretShots: TurretShot[] = [];
   readonly events: GameEvent[] = [];
+  private nextSnapshotSequence = 1;
   readonly detachedTrails: DetachedTrail[] = [];
   readonly destroyedWalls = new Set<number>();
   private readonly random: Random;
@@ -695,6 +696,7 @@ export class GameRoom {
   snapshot(now = Date.now()): GameSnapshot {
     return {
       type: 'snapshot',
+      sequence: this.nextSnapshotSequence++,
       room: this.id,
       levelId: this.level.id,
       devMode: this.devMode,

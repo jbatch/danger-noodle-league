@@ -14,6 +14,8 @@
     "dev:server": "node server/index.ts",
     "prebuild": "npm run levels:check",
     "build": "vinext build",
+    "benchmark:network": "node scripts/benchmark-network.mjs --write",
+    "benchmark:network:compare": "node scripts/compare-network-benchmarks.mjs",
     "start": "node scripts/start.mjs",
     "pretest": "npm run levels:check",
     "test": "node --test server/*.test.ts",

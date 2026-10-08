@@ -52,6 +52,27 @@ void test('development proxy does not store HTML or JavaScript', async () => {
   assert.ok(proxyAddress && typeof proxyAddress === 'object');
 
   try {
+    const healthResponse = await fetch(
+      `http://127.0.0.1:${proxyAddress.port}/health`,
+    );
+    assert.deepEqual(await healthResponse.json(), {
+      ok: true,
+      rooms: 0,
+      connections: 0,
+    });
+    assert.equal(healthResponse.headers.get('cache-control'), 'no-store');
+
+    const telemetryResponse = await fetch(
+      `http://127.0.0.1:${proxyAddress.port}/telemetry`,
+    );
+    const telemetry = (await telemetryResponse.json()) as {
+      state: { rooms: number; connections: number };
+      counters: { snapshotsSent: number };
+    };
+    assert.deepEqual(telemetry.state, { rooms: 0, connections: 0 });
+    assert.equal(telemetry.counters.snapshotsSent, 0);
+    assert.equal(telemetryResponse.headers.get('cache-control'), 'no-store');
+
     const htmlResponse = await fetch(
       `http://127.0.0.1:${proxyAddress.port}/?dev=true&room=DEV`,
       { signal: AbortSignal.timeout(2_000) },
@@ -564,6 +585,8 @@ void test('two websocket clients share an isolated room snapshot', async () => {
   const second = await connect(
     `ws://127.0.0.1:${server.port}/ws?room=COIL&name=Beta`,
   );
+  assert.match(first.extensions, /permessage-deflate/);
+  assert.match(second.extensions, /permessage-deflate/);
 
   const message = await players;
   assert.equal(message.type, 'snapshot');
@@ -573,6 +596,27 @@ void test('two websocket clients share an isolated room snapshot', async () => {
       'Beta',
     ]);
   }
+
+  first.send(
+    JSON.stringify({
+      type: 'network-stats',
+      snapshotIntervalMs: 50.2,
+      snapshotJitterMs: 1.4,
+      snapshotDecodeMs: 0.18,
+      droppedSnapshots: 2,
+      staleSnapshots: 1,
+    }),
+  );
+  first.send('{malformed');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const telemetry = server.telemetry.snapshot({ rooms: 1, connections: 2 });
+  assert.equal(telemetry.counters.clientReportedDroppedSnapshots, 2);
+  assert.equal(telemetry.counters.clientReportedStaleSnapshots, 1);
+  assert.equal(telemetry.counters.malformedMessages, 1);
+  assert.equal(telemetry.counters.compressionNegotiatedConnections, 2);
+  assert.equal(telemetry.metrics.clientSnapshotIntervalMs.latest, 50.2);
+  assert.equal(telemetry.metrics.clientSnapshotJitterMs.latest, 1.4);
+  assert.equal(telemetry.metrics.clientSnapshotDecodeMs.latest, 0.18);
 
   first.close();
   second.close();

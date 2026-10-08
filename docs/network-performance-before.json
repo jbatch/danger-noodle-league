@@ -1,0 +1,160 @@
+{
+  "metadata": {
+    "label": "before-optimization",
+    "capturedAt": "2026-10-08T01:16:40.072Z",
+    "commit": "617bd51",
+    "workingTree": "dirty",
+    "node": "v24.11.1",
+    "platform": "darwin 25.6.0 arm64",
+    "cpu": "Apple M1 Max (10 logical cores)",
+    "snapshotRateHz": 20,
+    "measuredIterations": 600,
+    "warmupIterations": 100
+  },
+  "results": [
+    {
+      "scenario": "full-trails",
+      "players": 2,
+      "rawBytes": 11811,
+      "deflateBytes": 2917,
+      "deflateRatio": 0.247,
+      "projectedClientKiBps": 230.7,
+      "projectedRoomMiBps": 0.451,
+      "projectedRoomGiBPerHour": 1.58,
+      "snapshotAndEncodeMs": {
+        "mean": 0.046,
+        "p50": 0.04,
+        "p95": 0.053,
+        "p99": 0.089,
+        "max": 1.224
+      },
+      "tickDurationMs": {
+        "mean": 0.014,
+        "p50": 0.013,
+        "p95": 0.019,
+        "p99": 0.06,
+        "max": 0.082
+      }
+    },
+    {
+      "scenario": "full-trails",
+      "players": 4,
+      "rawBytes": 22980,
+      "deflateBytes": 4665,
+      "deflateRatio": 0.203,
+      "projectedClientKiBps": 448.8,
+      "projectedRoomMiBps": 1.753,
+      "projectedRoomGiBPerHour": 6.16,
+      "snapshotAndEncodeMs": {
+        "mean": 0.081,
+        "p50": 0.078,
+        "p95": 0.086,
+        "p99": 0.155,
+        "max": 0.29
+      },
+      "tickDurationMs": {
+        "mean": 0.042,
+        "p50": 0.038,
+        "p95": 0.055,
+        "p99": 0.112,
+        "max": 0.385
+      }
+    },
+    {
+      "scenario": "full-trails",
+      "players": 8,
+      "rawBytes": 45130,
+      "deflateBytes": 8274,
+      "deflateRatio": 0.1833,
+      "projectedClientKiBps": 881.4,
+      "projectedRoomMiBps": 6.886,
+      "projectedRoomGiBPerHour": 24.21,
+      "snapshotAndEncodeMs": {
+        "mean": 0.161,
+        "p50": 0.157,
+        "p95": 0.193,
+        "p99": 0.26,
+        "max": 0.278
+      },
+      "tickDurationMs": {
+        "mean": 0.134,
+        "p50": 0.128,
+        "p95": 0.162,
+        "p99": 0.207,
+        "max": 0.261
+      }
+    },
+    {
+      "scenario": "busy-combat",
+      "players": 2,
+      "rawBytes": 19238,
+      "deflateBytes": 4839,
+      "deflateRatio": 0.2515,
+      "projectedClientKiBps": 375.7,
+      "projectedRoomMiBps": 0.734,
+      "projectedRoomGiBPerHour": 2.58,
+      "snapshotAndEncodeMs": {
+        "mean": 0.073,
+        "p50": 0.07,
+        "p95": 0.079,
+        "p99": 0.125,
+        "max": 0.198
+      },
+      "tickDurationMs": {
+        "mean": 0.029,
+        "p50": 0.021,
+        "p95": 0.046,
+        "p99": 0.08,
+        "max": 0.148
+      }
+    },
+    {
+      "scenario": "busy-combat",
+      "players": 4,
+      "rawBytes": 30897,
+      "deflateBytes": 6750,
+      "deflateRatio": 0.2185,
+      "projectedClientKiBps": 603.5,
+      "projectedRoomMiBps": 2.357,
+      "projectedRoomGiBPerHour": 8.29,
+      "snapshotAndEncodeMs": {
+        "mean": 0.11,
+        "p50": 0.108,
+        "p95": 0.117,
+        "p99": 0.207,
+        "max": 0.277
+      },
+      "tickDurationMs": {
+        "mean": 0.071,
+        "p50": 0.058,
+        "p95": 0.102,
+        "p99": 0.158,
+        "max": 0.192
+      }
+    },
+    {
+      "scenario": "busy-combat",
+      "players": 8,
+      "rawBytes": 54051,
+      "deflateBytes": 10626,
+      "deflateRatio": 0.1966,
+      "projectedClientKiBps": 1055.7,
+      "projectedRoomMiBps": 8.248,
+      "projectedRoomGiBPerHour": 29,
+      "snapshotAndEncodeMs": {
+        "mean": 0.198,
+        "p50": 0.19,
+        "p95": 0.23,
+        "p99": 0.345,
+        "max": 0.563
+      },
+      "tickDurationMs": {
+        "mean": 0.198,
+        "p50": 0.179,
+        "p95": 0.312,
+        "p99": 0.36,
+        "max": 0.778
+      }
+    }
+  ]
+}

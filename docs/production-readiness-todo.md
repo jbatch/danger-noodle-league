@@ -92,7 +92,7 @@ These are launch blockers.
 - [ ] Validate every protocol message and reject unknown or non-finite values without destabilizing a room.
 - [ ] Add an allowed-origin policy for production WebSocket upgrades.
 - [ ] Version the network protocol and handle incompatible clients with a readable error.
-- [ ] Ensure one slow or closed client cannot delay snapshots for other rooms.
+- [x] Skip replaceable snapshots when an individual client's buffered send queue exceeds 128 KiB, without delaying other clients or rooms.
 - [ ] Add load/soak tests for eight-player rooms, long trails, many projectiles, and many idle rooms.
 - [ ] Add deterministic replay or event capture sufficient to reproduce gameplay bugs.
 
@@ -120,7 +120,7 @@ These are launch blockers.
 - [x] Document production as deliberately single-instance while rooms remain in memory.
 - [ ] Add readiness and liveness checks that distinguish frontend health from simulation/WebSocket health.
 - [ ] Add structured logs for server start, room lifecycle, connections, disconnects, protocol errors, round outcomes, and uncaught failures.
-- [ ] Add basic metrics for active connections, rooms, tick duration, snapshot size, event-loop lag, reconnects, and errors.
+- [x] Add process-local metrics for active connections, rooms, tick duration, snapshot size/encode cost, event-loop lag, socket buffering/backpressure, compression negotiation, RTT, client decode time/jitter/gaps, and malformed messages. Reconnect counters and durable export remain future operations work.
 - [ ] Add graceful shutdown that stops new rooms, informs clients, and drains or ends active matches predictably.
 - [x] Pin the supported Node/runtime versions and verify a clean production install/build/start.
 - [x] Add CI gates for formatting, lint, tests, build, and generated-level freshness.
@@ -179,7 +179,7 @@ These are required before calling the recreation feature-complete, but they need
 
 ### Networking performance investigation
 
-- [ ] Add client and server performance telemetry for end-to-end update latency, RTT, jitter, stale/dropped snapshots, snapshot size and rate, server tick duration, event-loop lag, and encode/send cost; capture repeatable WebSocket baselines for 2-, 4-, and 8-player rooms under representative latency and packet loss.
+- [ ] Extend the preserved before/after client/server telemetry and deterministic 2-, 4-, and 8-player baselines with end-to-end update latency, actual host-level compressed byte counts, and repeatable WebSocket runs under representative latency and packet loss. Packed trails, per-message compression, and slow-client backpressure are implemented.
 - [ ] Spike WebTransport/QUIC behind the existing room/session protocol, using reliable streams for control messages and datagrams for replaceable real-time state where appropriate; compare it with the WebSocket baseline for latency, jitter, bandwidth, CPU cost, behaviour on degraded networks, browser/proxy compatibility, fallback requirements, and implementation complexity before deciding whether to migrate.
 
 ### Input and platform breadth

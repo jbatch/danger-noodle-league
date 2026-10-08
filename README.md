@@ -69,6 +69,30 @@ npm test
 npm run build
 ```
 
+## Network telemetry and baseline
+
+The authoritative server exposes process-local aggregate telemetry at
+[`/telemetry`](http://localhost:3000/telemetry). It reports active rooms and
+connections, snapshot bytes and encode cost, tick time, event-loop lag, socket
+buffering, compression negotiation, backpressure skips, RTT, and
+browser-reported snapshot cadence, decode cost, jitter, gaps, and stale updates.
+It contains no player names or room codes and resets with the server.
+
+The transport packs trail points into a versioned quarter-pixel wire format,
+negotiates per-message WebSocket compression, and skips replaceable snapshots
+for clients whose send queues exceed 128 KiB.
+
+Run the deterministic 2-, 4-, and 8-player baseline with:
+
+```bash
+npm run benchmark:network
+```
+
+The command writes a current Markdown/JSON pair. The performance pass also keeps
+the preserved [before run](docs/network-performance-before.md),
+[after run](docs/network-performance-after.md), and
+[before/after comparison](docs/network-performance-comparison.md).
+
 ## Docker production deployment
 
 Pushes to `main` run the tests and production build, then publish these images
